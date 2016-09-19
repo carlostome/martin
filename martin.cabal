@@ -5,8 +5,7 @@ description:         Please see README.md
 homepage:            https://github.com/carlostome/martin
 license:             BSD3
 license-file:        LICENSE
-author:              Renate Eilers, Fabian Thorand, Carlos Tomé & Ferdinand van
-Walree
+author:              Renate Eilers, Fabian Thorand, Carlos Tomé & Ferdinand van Walree
 --maintainer:          example@example.com
 --copyright:           2016 Author name here
 --category:            Web
