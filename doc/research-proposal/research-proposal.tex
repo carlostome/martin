@@ -10,6 +10,12 @@
 \usepackage{todonotes}
 \usepackage{enumitem}  % http://www.ctan.org/pkg/enumitem
 \usepackage[noabbrev]{cleveref}
+\usepackage{fancyvrb}
+\usepackage{unicornsoflove}
+
+ \DefineVerbatimEnvironment
+   {code}{Verbatim}
+   {} % Add fancy options here if you like.
 
 \author{Carlos Tomé Cortiñas
   \and Fabian Thorand
@@ -28,85 +34,143 @@
 The aim of this project is to exploit the connection between interactive tutors and interactive program development. Previous experiments with interactive programming tutors have shown that the use of such technologies can be beneficial to students learning new programming languages. It's not hard to see analogies between interactive learning in programming tutors, and interactive program development in Agda. In current programming tutors, teachers have to supply model solutions to exercises, while Agda can sometimes automatically construct programs given a specification. Our aim is to investigate which classes of programs can be automatically constructed in Agda, and whether a strategy for the stepwise construction of such a program can be recovered, as such strategies can aid students in finding a solution of their own.
 \end{abstract}
 
-\listoftodos
-
 \tableofcontents
 
 \section{Literature Review}
 
-We have reviewed several papers that researched either interactive learning in programming tutors, or the stepwise construction of Agda programs. We shortly summarise these papers and discuss how they relate to our own research. The first paper describes a tool for automated proving in Agda\cite{Lindblad2006}. The tool consists of an algorithm, which searches for and performs refinements on open goals in a proof. Each goal is represented by a meta variable, which is instantiated by refinement to a term that may contain new meta variables. There are different refinement rules, such as case expression, induction analysis and generalisation. Since each refinement may instantiate new meta variables, the algorithm can be iteratively used to stepwise construct an Agda program.
+Our literature review consists of a thorough analysis of several papers on the topics of Agda, automated proof search and interactive learning in programming tutors. We shortly summarise these papers and discuss how they relate to our own research. 
+
+Agda is a dependently typed programming language developed by Ulf Norell\cite{norell:thesis}. Because it is based in Martin-L\"of type theory, Agda is also meant to be a theorem prover for constructive mathematics. Programming in Agda does not differ that much from programming within any general purpose pure functional programming language. However, one of the main contributions of Norell's work is to make type checking work on the presence of metavariables. Metavariables stand for parts of the program that have not been implemented yet, they can be seen as holes that should be filled in, in order to finish the program. The approach to implement a program satisfying some type is to repeatedly refine the program by introducing expressions in the holes that may also contain other holes until no hole remains. Agda type checking algorithm can satisfactorily handle programs containing metavariables in a consistent way such that at any time the full program is well typed.
+Even though this is of great technical value, the inner workings of the type checking algorithm are too low-level for our purpose.
+
+With the existence of metavariables as part of Agda's core language, the search for an automatic procedure for solving them (finding a program that is well typed) has been a fruitful research topic. We now make an overview of the different approaches taken in literature.
+
+The first paper describes a tool for automated proving in Agda\cite{Lindblad2006}. The tool consists of an algorithm searching for and performing refinements on open goals in a proof. Each goal is represented by a metavariable which is instantiated by refinement to a term that may contain new meta variables. There are different refinement rules, such as case expression, induction analysis and generalisation. Since each refinement may instantiate new meta variables, the algorithm can be iteratively used to stepwise construct an Agda program.
 
 Another example of a proof search is given by Kokke and Swierstra in their paper “Auto in Agda”\cite{Kokke2015}, where they implemented a first-order unification-based search algorithm for automatically filling goals using a set of definitions provided as hints. It should be noted that in the current version, finding solutions for goals involving function types is not possible.
 
-Furthermore, a crucial step still missing to be able to completely automate the construction whole programs is performing case-splits. The latter step is supposedly hard to formalise as a general rule, because choosing which variable to split on might heavily depend on the intended use of the function being written, and can also severely impact the size of the resulting program. 
-
-‘Auto’ has also been implemented in other dependently-typed languages such as Coq\cite{Pierce}. The proof search implemented in Coq works in a similar way by recursively trying to apply the available assumptions in the current context. It also does not perform any case-destruction or induction on arbitrary data types, although there are specialised tactics which at least decompose conjunctions and disjunctions.
+Furthermore, a crucial step still missing to be able to completely automate the construction of whole programs is performing case-splits. The latter step is supposedly hard to formalise as a general rule, because choosing which variable to split on might heavily depend on the intended use of the function being written, and can also severely impact the size of the resulting program.
 
 Another approach to automatic program construction is given by Foster and Struth\cite{Foster2011} where the automation is provided by external tools denominated as Automatic theorem provers which have been shown to be quite effective in the proof assistant Isabelle/HOL. However, such process is a black box that until a solution is found can not be inspected. 
 
+The automation of proof search is not only limited to the context of Agda. ‘Auto’ has also been implemented in other dependently-typed languages such as Coq\cite{Pierce}. The proof search implemented in Coq works in a similar way by recursively trying to apply the available assumptions in the current context. It also does not perform any case-destruction or induction on arbitrary data types, although there are specialised tactics which at least decompose conjunctions and disjunctions.
+
+Now we turn our focus to papers in the domain of intelligent tutoring systems focused on programming.
+
 An example of an interactive programming tutor is Ask-Elle\cite{Gerdes2012}. Within the tutor, teachers can define exercises for students to work on. Student input is compared to model solutions, which are supplied by the teacher. This comparison is done under alpha equivalence, beta reduction and desugaring. Teachers have the option to annotate model solutions: they can supply hints on which direction to go next at any given point. This allows students to request hints at will. An experiment with the tutor on some hundred students showed that students are moderately happy with the tutor. The paper explains the benefits of interactive programming tutors, but as the techniques that the tutor uses are completely reliant on equivalence to model solutions, it offers nothing on the automatic construction of programs.
 
-A continuation of the work above, \cite{Jeuring2014} reports an extension of the interactive functional programming tutor. The tutor, dubbed Ask-Elle, is endowed with a system for checking the correctness of student attempts that deviate from model solutions. To make this work, the teacher has to supply a number of properties that a correct solution should adhere to. Ask-Elle calls on QuickCheck to test whether these properties do indeed hold. The techniques used in this paper may be useful for explaining what is missing from an attempted solution, but they do not help in describing the stepwise construction of one.
-
-\todo[inline]{Reference Agda Thesis for type checking/auto algorithm}
+As a continuation of the work above, \cite{Jeuring2014} reports an extension of the interactive functional programming tutor. The tutor, dubbed Ask-Elle, is endowed with a system for checking the correctness of student attempts that deviate from model solutions. To make this work, the teacher has to supply a number of properties that a correct solution should adhere to. Ask-Elle calls on QuickCheck to test whether these properties do indeed hold. The techniques used in this paper may be useful for explaining what is missing from an attempted solution, but they do not help in describing the stepwise construction of one.
 
 \section{Research Objective}
 
 What (sub-)class of semi-decidable programs (or, equivalently, proofs) can be automatically constructed in the programming language Agda through a series of mechanical steps that would normally be performed by a user writing a program, and how can we automatically extract these steps for programs within these classes? Finding an answer to this question is the main objective of our research. 
 
-% this paragraph is meant to replace the one after it, please check if it's ok
-Decidable problems can be completed in a straightforward fashion, as shown by the numerous proof search algorithm we found during the literature review. The same algorithm can also work for some semi-decidable problems, when the actual solution happens to lie within the given search depth. The search space must be restricted in that case, because otherwise, termination of the search cannot be guaranteed. On the downside, this might prevent us from finding solutions in some cases where it would have been possible. The latter could probably be mitigated by using some heuristics to guide the search, enabling us to find solutions for common problems in a shorter amount of time.
-
-%We hypothesise that some classes of programs are fully decidable. For programs within these classes it should at any point be possible to check whether a (partial) implementation can lead to a correct solution. Additionally, we think there are classes of semi-decidable programs for which the same is possible given that certain heuristics are applied. 
+Decidable problems can be completed in a straightforward fashion, as shown by the numerous proof search algorithm we found during the literature review. The same algorithm can also work for some semi-decidable problems, when the actual solution happens to lie within the given search depth. The search space must be restricted in that case, because otherwise, termination of the search cannot be guaranteed. On the downside, this might prevent us from finding solutions in some cases where it would have been possible. The latter could probably be mitigated by using some heuristics to guide the search, enabling us to find solutions for common problems with fewer steps.
 
 We hope to characterise these classes, and to look into methods for telling whether a program belongs to any of them. Moreover, we want to find out if there is a way to automatically generate a stepwise solution for programs for which there is one.
 
 A mechanism to automatically write proof or program terms already exists in Agda, but it is a black box that does not allow the inspection of the individual steps taken by the proof search. Our aim is to make the steps taken explicit. All of this work takes place in the context of interactive programming tutors: if the path towards a solution is known, it can be used to guide users whom are stuck towards the next step they should take. It has been shown that interactive programming tutors can significantly improve learning\cite{corbett1988problem}, and we think this research is a good first step in the way of developing a full scale interactive tutor for the Agda programming language.
 
-\todo[inline]{add example programs demonstrating what we plan to be able to do}
+The following examples serve to demonstrate what we eventually plan to achieve.
+Suppose that we are given the following program fragment
+\begin{lstlisting}[mathescape, language = agda]
+data Nat : Set where
+  zero : Nat
+  succ : Nat -> Nat
 
-% I think everything below this comment should go into the "Outline of Research" section.
-% I have already moved this part, but it should probably be condensed somehow
+data Vec (a : Set) : Nat -> Set where
+  Nil  : Vec a zero
+  Cons : forall {n} -> a -> Vec a n -> Vec a (succ n)
+  
+map : forall {a b n} -> (a -> b) -> Vec a n -> Vec b n
+map f xs = {!!}
+\end{lstlisting}
+The only way of filling the hole with a vector of length $n$ is to somehow apply \texttt{cons} exactly $n$ times. While refining the hole with such a series of constructors works locally, it won't lead to a solution, because there is no way of filling in the remaining holes of type $b$.
+An Agda tutoring system should figure out that the only sensible step at this point is to case-split on the variable \texttt{xs}, leading to the following fragment:
+\begin{lstlisting}[mathescape, language = agda, numbers = none]
+map : forall {a b n} -> (a -> b) -> Vec a n -> Vec b n
+map f Nil = {!!}
+map f (Cons x xs) = {!!}
+\end{lstlisting}
+From the definitions in scope, \texttt{Nil} already has the right type to fill the first hole.
+The type of \texttt{map} can also be used to instantiate the hole, but since it is not possible to further structurally reduce its arguments, this step should have been discarded during the search already.
+Similarly, the only right choice, inferred from the type, for refining the second hole is \texttt{Cons}.
+\begin{lstlisting}[mathescape, language = agda, numbers = none]
+map : forall {a b n} -> (a -> b) -> Vec a n -> Vec b n
+map f Nil = Nil
+map f (Cons x xs) = Cons {!!} {!!}
+\end{lstlisting}
+The only possibility of acquiring a \texttt{b} is by applying \texttt{f} to something, leading to a new hole of type \texttt{a}. Likewise, only \texttt{map} is general enough to fill the second hole, leaving two more holes.
+\begin{lstlisting}[mathescape, language = agda, numbers = none]
+map : forall {a b n} -> (a -> b) -> Vec a n -> Vec b n
+map f Nil = Nil
+map f (Cons x xs) = Cons (f {!!}) (map {!!} {!!})
+\end{lstlisting}
+The first hole can be trivially filled with \texttt{x}. On the other hand, in this intermediate stage, the built-in Agda proof search is unable to find values for the latter two holes.
+This is because it cannot figure out what it should use to instantiate the \texttt{a} parameter of the \texttt{Vec} type. Nevertheless, one definition in scope that could possibly fit by unifying the types is \texttt{xs}, since it already has the right length \texttt{n}.
+From there, it is then evident that only \texttt{f} matches the first argument, resulting in the final program:
+\begin{lstlisting}[mathescape, language = agda, numbers = none]
+map : forall {a b n} -> (a -> b) -> Vec a n -> Vec b n
+map f Nil = Nil
+map f (Cons x xs) = Cons (f x) (map f xs)
+\end{lstlisting}
 
-\todo[inline]{probably put following part in ``outline of research''}
-A first step is to explicitly formulate under which conditions and to what effect certain steps can be taken. In any given hole in an Agda program, the programmer can choose between performing a case-split, or refining the hole by (partly) filling in a code fragment of the right type. Holes can be refined by (recursively) calling a function returning a value of the right type or a suitable data constructor. These actions themselves then generate new holes for each argument.
-The holes can be filled in a type-directed manner, as for example seen in the “Auto in Agda” paper, whereas the choice of when to case-split which variable seems to be rather arbitrary. Furthermore, it is sometimes required to perform nested case-splits, quickly leading to a combinatorial explosion of the search space.
+Curiously, Agda's auto command finds exactly that right hand side when just being presented with 
+\lstinline|map f (Cons x xs) = ?|.
 
-Additionally, we expect that the proof search, similar to an actual programmer, requires some degree of backtracking before finding the right solution. Therefore, it might be difficult to accurately provide hints to the user just based on the current state.
+Of course, while the above program does what we would expect from a function called \texttt{map}, the type does not prevent the function from replicating the first value of the list \texttt{n} times. Though, if one is limited to only use the definitions in scope, this is the straightforward solution.
 
-In addition to consulting the type of the goal, we will also investigate whether external properties about the function being written can be used to guide the selection of the right steps. Such properties could be simple relations of known inputs and their corresponding outputs, but more general statements might also be viable.
-
-If there is enough time left, an additional part could consists of finding out, to what extent dependent types can be supported, before it becomes too complex to find possible refinements.
+When the type signature provides less strong guarantees, such as in
+\begin{lstlisting}[mathescape, language = agda, numbers = none]
+foldr : forall {a n} {b : Set} -> (a -> b -> b) -> b -> Vec a n -> b
+\end{lstlisting}
+the simplest solution that can be found, namely always returning the neutral element,
+does not have the intended meaning. This is where introducing properties could help guiding the search for the right term. If, for example, we require that 
+\begin{lstlisting}[mathescape, language = agda, numbers = none]
+foldr add 0 (Cons 1 Nil) == 1
+\end{lstlisting}
+for some suitable definitions of \texttt{add} and numerals, a solution always returning the neutral element would already be ruled out.
 
 \section{Outline of Research}
 
-Our research begins with a literature review. We have to understand how current theorem provers integrate automatic proof search and whether there are any current theorem provers that already support stepwise construction. We have already shortly discussed several papers \cite{Kokke2015},\cite{Lindblad2006} that implement automatic theorem provers in Agda. We will compare these theorem provers and decide which one is most related to stepwise construction of an Agda program. We will then research if we can apply this to stepwise construction of Agda programs and whether any modifications are necessary. We approach this problem in parallel. We will implement a prototype and determine how a number of example programs can be stepwise constructed.
+Our research begins with a literature review. We have to understand how current theorem provers integrate automatic proof search and whether there currently are any theorem provers that already support stepwise construction. We have already briefly discussed several papers (\cite{Kokke2015},\cite{Lindblad2006},\cite{Foster2011}) that implement automatic theorem provers for Agda. 
 
-We will implement a prototype based on one of the theorem provers, modifying them in order to be able to explicitly extract steps taken to construct the program. Additionally, we will add support for case-splitting, since that is currently missing from any of the existing solutions we have investigated. %paper [5] has case splitting, or are we already deciding on Auto in Agda?
+First, we will look into the automated tools to discern if any of those approaches can help use to extract a stepwise strategy for the construction of the Agda program in a top-bottom fashion. As we commented in the literature review, some of this tools as they are currently implemented work as black boxes which either give a correct solution or fail due to time or exhausted search space conditions. 
 
-In order to implement a prototype, we are going to use the Haskell programming language in which Agda is implemented. Agda is available as a library through the Haskell central repository (Hackage) so we can interface our program seamlessly with it. Although being exposed to the public, the Agda library is not meant to be used by a third party library/application (stated in the Hackage page) so we don’t know how easy the integration will be for our purposes.
+To determine whether a given Agda program can be automatically constructed in a stepwise manner, it is necessary that we research under what conditions and to what effect steps can be taken: for a given hole in an Agda program, a user can choose between performing a case-split, or refining the hole by (partly) filling in a code fragment of the right type. Holes can be filled in a type-directed manner, as seen in the “Auto in Agda” paper, whereas the choice of when to case-split which variable seems to be rather arbitrary. Furthermore, nested case-splits are sometimes required, quickly leading to a combinatorial explosion of the search space.
 
-To determine whether certain example programs can be stepwise constructed, we will first have to research how Agda programs can differ from each other. Then to determine how such an example program could be stepwise constructed, we plan to explicitly formulate under which conditions and to what effect certain steps can be taken.%I think we can condense what is said below as I find it a bit too specific for outline of research
-In any given hole in an Agda program, the programmer can choose between performing a case-split, or refining the hole by (partly) filling in a code fragment of the right type. Holes can be refined by (recursively) calling a function returning a value of the right type or a suitable data constructor. These actions themselves then generate new holes for each argument.
-The holes can be filled in a type-directed manner, as for example seen in the “Auto in Agda” paper, whereas the choice of when to case-split which variable seems to be rather arbitrary. Furthermore, it is sometimes required to perform nested case-splits, quickly leading to a combinatorial explosion of the search space.
+Simultaneous to researching example programs, we will also be working on implementing a prototype. Initially, this prototype will have to be supplied with a number example programs for which the construction steps have been analysed manually. Eventually, we aim to extend the prototype to be able to explicitly extract steps taken to construct programs automatically, as per the algorithm we hope to have adapted from the existing theorem provers by then. 
 
-Additionally, we expect that the proof search, similar to an actual programmer, requires some degree of backtracking before finding the right solution. Therefore, it might be difficult to accurately provide hints to the user just based on the current state.
+To implement the prototype, we will be using the Haskell programming language. This is the language in which Agda is implemented. Agda is available as a library through the Haskell central repository (Hackage) and so we hope to be able to interface our program  with it seamlessly. However, we don’t know how easy the integration will be for our purposes: although being exposed to the public, it is stated on its Hackage page that the Agda library is not meant to be used by third party libraries and applications.
 
-In addition to consulting the type of the goal, we will also investigate whether external properties about the function being written can be used to guide the selection of the right steps. Such properties could be simple relations of known inputs and their corresponding outputs, but more general statements might also be viable.
+The prototype should supply the following functionalities: 
+\begin{enumerate}
+\item A user can select from a number of predefined exercises
+\item An exercise consists of a type declaration, a function name and holes in the relevant places
+\item At any point, a user can select a hole to work on. They are then faced with a number of options for completing the hole. These options may contain performing a case split, calling any of the functions in scope, or filling in constants.
+\item If a user is stuck, they can query the tutor for a hint.
+\end{enumerate}
 
-If there is enough time left, an additional part could consists of finding out, to what extent dependent types can be supported, before it becomes too complex to find possible refinements.
+Our work on the characterization of Agda programs, that can be automatically derived given existing algorithms, might not be able to outperform existing external automated theorem provers such as done by Foster and Struth\cite{Foster2011}.
+In some cases, this tool already beats Agda auto search as implemented by Lindblad and Benke\cite{Lindblad2006}.
+Therefore, we could complement our research  with the automatic reconstruction of refinements given solutions provided by the tool.
+This will be based on existing work by Jeuring et al.\cite{Jeuring2014} but in the context of Agda.
 
-Having implemented a prototype and researched example programs, we can proceed to analyse the algorithm. We will analyse whether the researched example programs can be constructed in a reasonable amount of time. We define the complexity by the number of different tactics that it has to consider, properties/functions that are in scope, algebraic datatypes and dependently-typed records. We will measure the time it takes for our algorithm to solve a proof and the number of refinements it required to do so. We can then make a comparison to auto in Agda or a different theorem prover.
+If there is enough time left, we hope to investigate whether external properties about the function being written can be used to guide the selection of the steps to be taken next. Such properties could be simple relations of known inputs and their corresponding outputs, but more general statements might also be viable. Another addition could consist of finding out to what extent dependent types can be supported, before finding possible refinements becomes too complex.
 
+Our final step is to analyse the prototype. We want to see whether example programs can be constructed in a reasonable amount of time, as compared to the other algorithms we have looked into. We should also check whether the solutions our prototype supplies aren't overly complex. We define the complexity of a solution by the number of refinements that were needed to get to it. 
 
 \section{Preliminary Timetable}
 
-\begin{tabular}{l l}
+\begin{tabular}{l l }
 Monday 3 October & submitting research proposal \\
 
-Monday 10 October & finish writing down the steps a user can take \\
+Monday 10 October & prototype interface with Agda \\
+ 		& have example programs with derivations \\
+		& have decided on an algorithm \\
 
-Monday 17 October & finish preliminary implementation \\
+Monday 17 October & finished implementing the algorithm \\
+				  & finished classification of Agda programs\\
 
 Monday 24 October & finish implementation \& preliminary report \\
 
@@ -119,3 +183,4 @@ Wednesday 2 November & submit final report \\
 \bibliography{literature}
 
 \end{document}
+
