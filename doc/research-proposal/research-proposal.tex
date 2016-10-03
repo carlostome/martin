@@ -28,6 +28,8 @@
 The aim of this project is to exploit the connection between interactive tutors and interactive program development. Previous experiments with interactive programming tutors have shown that the use of such technologies can be beneficial to students learning new programming languages. It's not hard to see analogies between interactive learning in programming tutors, and interactive program development in Agda. In current programming tutors, teachers have to supply model solutions to exercises, while Agda can sometimes automatically construct programs given a specification. Our aim is to investigate which classes of programs can be automatically constructed in Agda, and whether a strategy for the stepwise construction of such a program can be recovered, as such strategies can aid students in finding a solution of their own.
 \end{abstract}
 
+\listoftodos
+
 \tableofcontents
 
 \section{Literature Review}
@@ -46,11 +48,28 @@ An example of an interactive programming tutor is Ask-Elle\cite{Gerdes2012}. Wit
 
 A continuation of the work above, \cite{Jeuring2014} reports an extension of the interactive functional programming tutor. The tutor, dubbed Ask-Elle, is endowed with a system for checking the correctness of student attempts that deviate from model solutions. To make this work, the teacher has to supply a number of properties that a correct solution should adhere to. Ask-Elle calls on QuickCheck to test whether these properties do indeed hold. The techniques used in this paper may be useful for explaining what is missing from an attempted solution, but they do not help in describing the stepwise construction of one.
 
-\section{Research Objective}
-Our goal is to characterise a (sub-)class of semi-decidable programs (and equivalently, proofs) in the Agda programming language, that can be automatically constructed by a series of mechanical steps a user would normally perform when writing the program.
-A mechanism to automatically write proof or program terms already exists in Agda, but it is a black box that does not allow the inspection of the individual steps taken by the proof search.
+\todo[inline]{Reference Agda Thesis for type checking/auto algorithm}
 
-Hence, we plan to explicitly formulate under which conditions and to what effect certain steps can be taken. In any given hole in an Agda program, the programmer can choose between performing a case-split, or refining the hole by (partly) filling in a code fragment of the right type. Holes can be refined by (recursively) calling a function returning a value of the right type or a suitable data constructor. These actions themselves then generate new holes for each argument.
+\section{Research Objective}
+
+What (sub-)class of semi-decidable programs (or, equivalently, proofs) can be automatically constructed in the programming language Agda through a series of mechanical steps that would normally be performed by a user writing a program, and how can we automatically extract these steps for programs within these classes? Finding an answer to this question is the main objective of our research. 
+
+% this paragraph is meant to replace the one after it, please check if it's ok
+Decidable problems can be completed in a straightforward fashion, as shown by the numerous proof search algorithm we found during the literature review. The same algorithm can also work for some semi-decidable problems, when the actual solution happens to lie within the given search depth. The search space must be restricted in that case, because otherwise, termination of the search cannot be guaranteed. On the downside, this might prevent us from finding solutions in some cases where it would have been possible. The latter could probably be mitigated by using some heuristics to guide the search, enabling us to find solutions for common problems in a shorter amount of time.
+
+%We hypothesise that some classes of programs are fully decidable. For programs within these classes it should at any point be possible to check whether a (partial) implementation can lead to a correct solution. Additionally, we think there are classes of semi-decidable programs for which the same is possible given that certain heuristics are applied. 
+
+We hope to characterise these classes, and to look into methods for telling whether a program belongs to any of them. Moreover, we want to find out if there is a way to automatically generate a stepwise solution for programs for which there is one.
+
+A mechanism to automatically write proof or program terms already exists in Agda, but it is a black box that does not allow the inspection of the individual steps taken by the proof search. Our aim is to make the steps taken explicit. All of this work takes place in the context of interactive programming tutors: if the path towards a solution is known, it can be used to guide users whom are stuck towards the next step they should take. It has been shown that interactive programming tutors can significantly improve learning\cite{corbett1988problem}, and we think this research is a good first step in the way of developing a full scale interactive tutor for the Agda programming language.
+
+\todo[inline]{add example programs demonstrating what we plan to be able to do}
+
+% I think everything below this comment should go into the "Outline of Research" section.
+% I have already moved this part, but it should probably be condensed somehow
+
+\todo[inline]{probably put following part in ``outline of research''}
+A first step is to explicitly formulate under which conditions and to what effect certain steps can be taken. In any given hole in an Agda program, the programmer can choose between performing a case-split, or refining the hole by (partly) filling in a code fragment of the right type. Holes can be refined by (recursively) calling a function returning a value of the right type or a suitable data constructor. These actions themselves then generate new holes for each argument.
 The holes can be filled in a type-directed manner, as for example seen in the “Auto in Agda” paper, whereas the choice of when to case-split which variable seems to be rather arbitrary. Furthermore, it is sometimes required to perform nested case-splits, quickly leading to a combinatorial explosion of the search space.
 
 Additionally, we expect that the proof search, similar to an actual programmer, requires some degree of backtracking before finding the right solution. Therefore, it might be difficult to accurately provide hints to the user just based on the current state.
@@ -61,13 +80,23 @@ If there is enough time left, an additional part could consists of finding out, 
 
 \section{Outline of Research}
 
-Our research begins with a literature review. We have to understand how current theorem provers integrate automatic proof search and whether there are any current theorem provers that already support stepwise construction. We have already shortly discussed several papers \cite{Kokke2015},\cite{Lindblad2006} that implement automatic theorem provers in Agda. We will compare these theorem provers and decide which one is most related to stepwise construction of an Agda program.
+Our research begins with a literature review. We have to understand how current theorem provers integrate automatic proof search and whether there are any current theorem provers that already support stepwise construction. We have already shortly discussed several papers \cite{Kokke2015},\cite{Lindblad2006} that implement automatic theorem provers in Agda. We will compare these theorem provers and decide which one is most related to stepwise construction of an Agda program. We will then research if we can apply this to stepwise construction of Agda programs and whether any modifications are necessary. We approach this problem in parallel. We will implement a prototype and determine how a number of example programs can be stepwise constructed.
 
-Our plan is then to implement a prototype based on one of the theorem provers, modifying them in order to be able to explicitly extract the steps taken to construct the program. Additionally we will add support for case-splitting, since that is currently missing from any of the existing solutions we have investigated.
+We will implement a prototype based on one of the theorem provers, modifying them in order to be able to explicitly extract steps taken to construct the program. Additionally, we will add support for case-splitting, since that is currently missing from any of the existing solutions we have investigated. %paper [5] has case splitting, or are we already deciding on Auto in Agda?
 
 In order to implement a prototype, we are going to use the Haskell programming language in which Agda is implemented. Agda is available as a library through the Haskell central repository (Hackage) so we can interface our program seamlessly with it. Although being exposed to the public, the Agda library is not meant to be used by a third party library/application (stated in the Hackage page) so we don’t know how easy the integration will be for our purposes.
 
-Having implemented a prototype, we can proceed to analyse the algorithm. We will analyse if there are classes of programs that Agda can proof in a reasonable amount of time. We do this by having the algorithm proof programs of increasing complexity. We define the complexity by the number of different tactics that it has to consider, properties/functions that are in scope, algebraic datatypes and dependently-typed records. We will measure the time it takes for our algorithm to solve a proof and the number of refinements it required to do so. We can then make a comparison to auto in Agda or a different theorem prover.
+To determine whether certain example programs can be stepwise constructed, we will first have to research how Agda programs can differ from each other. Then to determine how such an example program could be stepwise constructed, we plan to explicitly formulate under which conditions and to what effect certain steps can be taken.%I think we can condense what is said below as I find it a bit too specific for outline of research
+In any given hole in an Agda program, the programmer can choose between performing a case-split, or refining the hole by (partly) filling in a code fragment of the right type. Holes can be refined by (recursively) calling a function returning a value of the right type or a suitable data constructor. These actions themselves then generate new holes for each argument.
+The holes can be filled in a type-directed manner, as for example seen in the “Auto in Agda” paper, whereas the choice of when to case-split which variable seems to be rather arbitrary. Furthermore, it is sometimes required to perform nested case-splits, quickly leading to a combinatorial explosion of the search space.
+
+Additionally, we expect that the proof search, similar to an actual programmer, requires some degree of backtracking before finding the right solution. Therefore, it might be difficult to accurately provide hints to the user just based on the current state.
+
+In addition to consulting the type of the goal, we will also investigate whether external properties about the function being written can be used to guide the selection of the right steps. Such properties could be simple relations of known inputs and their corresponding outputs, but more general statements might also be viable.
+
+If there is enough time left, an additional part could consists of finding out, to what extent dependent types can be supported, before it becomes too complex to find possible refinements.
+
+Having implemented a prototype and researched example programs, we can proceed to analyse the algorithm. We will analyse whether the researched example programs can be constructed in a reasonable amount of time. We define the complexity by the number of different tactics that it has to consider, properties/functions that are in scope, algebraic datatypes and dependently-typed records. We will measure the time it takes for our algorithm to solve a proof and the number of refinements it required to do so. We can then make a comparison to auto in Agda or a different theorem prover.
 
 
 \section{Preliminary Timetable}
