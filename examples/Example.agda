@@ -37,7 +37,7 @@ sym refl = refl
 -- | Also trivial, but has more than one solution, depending whether one case-splits
 -- just one argument or both.
 trans : ∀{A} {x y z : A} → x == y → y == z → x == z
-trans refl q = q
+trans p refl = p
 
 -- | Also trivial, but useful for constructing other proofs later on.
 cong : ∀{A B} → (f : A → B) → {x y : A} → x == y → f x == f y
@@ -61,7 +61,6 @@ data _≤_ : Nat → Nat → Set where
    - refine with recursive call
 -}
 leq-add-invariant : ∀ {l m} → (n : Nat) → l ≤ m → l + n ≤ m + n
--- leq-add-invariant n p = {!!}
 leq-add-invariant zero p = p
 leq-add-invariant (succ n) p = leq-succ (leq-add-invariant n p)
 
@@ -87,3 +86,18 @@ data _⊆_ {A : Set} : {m n : Nat} → Vec A m → Vec A n → Set where
   sub-same  : ∀{m n} {xs : Vec A m} {ys : Vec A n} {x : A} → xs ⊆ ys → x ∷ xs ⊆ x ∷ ys
   sub-cons  : ∀{m n} {xs : Vec A m} {ys : Vec A n} {y : A} → xs ⊆ ys → xs ⊆ y ∷ ys
 
+
+data Foo : Nat → Set where
+  Bar : Foo 0
+  Baz : ∀{n} → Foo (succ n)
+
+data Test : Nat → Set where
+  test : (n : Nat) → Test n
+
+foo : (n : Nat) → Foo n → Test n
+foo .0 Bar = test zero
+foo _ Baz = test (succ _)
+
+fooadd : Nat → Nat → Nat
+fooadd x zero = x
+fooadd x (succ y) = succ {!!}

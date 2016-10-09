@@ -91,9 +91,9 @@
   \begin{lstlisting}[mathescape, gobble=4, language = agda]
     data Foo : Nat -> Set where
       Bar : Foo 0
-      Baz : ∀{n} → Foo (succ n)
+      Baz : forall {n} -> Foo (succ n)
 
-    foo : (n : Nat) → Foo n → Nat
+    foo : (n : Nat) -> Foo n -> Nat
     foo zero Bar = {!!}
     foo (succ n) Baz = {!!}
   \end{lstlisting}
@@ -106,7 +106,7 @@
   argument, resulting in
   
   \begin{lstlisting}[mathescape, gobble=4, language = agda]
-    foo : (n : Nat) → Foo n → Nat
+    foo : (n : Nat) -> Foo n -> Nat
     foo .0 Bar = {!!}
     foo _ Baz = {!!}
   \end{lstlisting}
@@ -165,6 +165,34 @@ some heuristics for refinement
   between to attempts of solving the same goal, that only differ in some
   additional case splits.
 \end{itemize}
+
+\subsection{Introducing Properties}
+
+\begin{itemize}
+\item basic properties on some function $f$ should be of the following shape
+  \begin{equation}
+    \label{eq:prop}
+    \forall \vec{x}. f\ t_1\ \ldots\ t_n \equiv t_{n+1}
+  \end{equation}
+  where $t_1, \ldots, t_{n+1}$ are terms possibly involving some of the
+  universally quantified variables.
+  This provides simple means for stating relations between the inputs and result
+  of a function.
+\item investigate whether we can handle universal quantification in properties
+\item Before starting the refinement phase, we can check which properties apply
+  to the current clause. Then we can use Agda to (partially) normalize the
+  property expression, resulting in an expression, that might contain additional
+  metavariables. But even these partial results can be used to restrict the set
+  of possible solutions to a hole, if the metavariables only occur inside some
+  constructors.
+\item investigate whether properties can be used for guiding case splits
+%\item Consider the following example, where we have the property $\forall x. x +
+%  0 \equiv x$ and the following code fragment
+\end{itemize}
+
+\subsection{The Strategy}
+
+TODO
 
 \bibliographystyle{plain}
 \bibliography{literature}
