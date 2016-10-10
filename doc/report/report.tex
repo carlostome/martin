@@ -49,10 +49,6 @@
 
 \subsection{Rules of Construction}
 
-\begin{itemize}
-\item we
-\end{itemize}
-
 \paragraph{Case splitting}
 
 \begin{itemize}
@@ -124,7 +120,20 @@ some heuristics to guide case splitting
   In realistic examples making use of Agda's support for dependent types, we
   expect this number to be a lot smaller.
 \item sometimes, it might only be possible to split a variable after first
-  having split some other arguments before it
+  having split some other arguments before it, although we are not sure (yet)
+  for which programs this is the case and whether it will affect our approach.
+\item a good guess for the order in which to perform case splitting might be the
+  topological sorted dependency graph of the argument types, starting with the
+  arguments on which no further arguments depend.
+  In the type signature
+  
+  \begin{lstlisting}[mathescape, gobble=4, language = agda]
+    (m n : Nat) -> (p : m == n) -> n == m
+  \end{lstlisting}
+  a valid topologically sorted sequence would be $m, n, p$, hence we would split
+  first on $p$.
+  The disadvantage of this approach is that it introduces dot patterns in the
+  preceding arguments, where we do not know how to handle them appropriately
 \end{itemize}
 
 \paragraph{Refinement}
@@ -151,7 +160,8 @@ some heuristics for refinement
 
 \begin{itemize}
 \item a variable of a correct type should always be preferred over introducing
-  data constructors or function calls. \todo{Add reasoning for that}
+  data constructors or function calls, because it clearly leads to the simplest
+  solutions
 \end{itemize}
 
 \subsection{Combining case split and refinement}
@@ -185,14 +195,48 @@ some heuristics for refinement
   metavariables. But even these partial results can be used to restrict the set
   of possible solutions to a hole, if the metavariables only occur inside some
   constructors.
-\item investigate whether properties can be used for guiding case splits
-%\item Consider the following example, where we have the property $\forall x. x +
-%  0 \equiv x$ and the following code fragment
+\item investigate whether properties can be used for guiding case splits. for
+  example, if we consider the property $\forall x. x + 0 \equiv x$, then it
+  might be sensible to assume that splitting on the second argument is
+  preferred.
+\item it seems that universally quantified properties are only helpful during
+  the search phase, if the universally quantified arguments are exactly those,
+  that are not case-split during the search
 \end{itemize}
 
 \subsection{The Strategy}
 
-TODO
+For a given type signature we use Agda's expressive type system to generate a
+model solution. Here, we need to take into account the current partial solution
+created by the student, because they might have chosen a different path leading
+to the same (or different but also valid) solution.
+
+If no solution can be found starting at the students current partial solution,
+then either the path chosen by the student will indeed not lead to a successful
+completion of the problem, or it will, but the algorithm is just not able to
+find it.
+
+When we have found a model solution, we track back the steps taken by the search
+algorithm to provide a strategy that can be used to give hints to the student.
+Ideally, if the type signature is strong enough, there is only one valid
+solution to an Agda program.
+
+\begin{itemize}
+\item on the top level of the strategy, we can interleave the sub-strategies for
+  solving individual clauses of a function definition. (they are independent of
+  each other)
+\item trying to solve a certain clause can produce more clauses when case splits
+  are performed
+\item when solving a clause, case splits must always be performed before
+  refinements
+\item the order of refining holes in the current clause generally does not
+  matter (i.e.\ it could be interleaved), but in certain cases Agda will only
+  accept a refinement for a function argument if another argument is refined
+  before
+\item the case split strategy is constructed from a valid order of splits that
+  lead to a successful completion of the right hand side
+\item the refinement strategy is guided by the steps taken by the proof search
+\end{itemize}
 
 \bibliographystyle{plain}
 \bibliography{literature}
