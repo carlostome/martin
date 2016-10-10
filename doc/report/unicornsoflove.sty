@@ -1,0 +1,123 @@
+\ProvidesPackage{unicornsoflove}
+
+%%\usepackage{eacl2014}
+\usepackage{xcolor}
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+\definecolor{navy}{rgb}{0.22,0.49,0.72}
+\definecolor{strawberry}{rgb}{0.72,0.22,0.49}
+\definecolor{redish}{rgb}{1,0,0}
+\special{papersize=210mm,297mm} % to avoid having to use "-t a4" with dvips 
+%\setlength\titlebox{6.5cm}  % You can expand the title box if you really have to
+%\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{placeins}
+
+\definecolor{dkviolet}{RGB}{54,135,96}
+\definecolor{dkgreen2}{RGB}{227,172,87}
+\definecolor{ltblue}{RGB}{225,94,94}
+\definecolor{dkblue}{RGB}{236,231,118}
+\definecolor{dkred}{RGB}{28,45,81}
+\usepackage{listings}
+
+% lstlisting Agda style
+%
+\lstdefinelanguage{Agda}{ 
+%
+% Anything betweeen $ becomes LaTeX math mode
+mathescape=true,
+%
+% Comments may or not include Latex commands
+texcl=false, 
+%
+morekeywords=[1]{}, 
+%
+morekeywords=[2]{where, with, rewrite, data,module, import, postulate},
+%
+morekeywords=[3]{true, false, refl, Nil, Cons, zero, succ},
+%
+morekeywords=[4]{main },
+%
+morekeywords=[6]{Set, Nat, String, Bool, Char, Vec}, % For data types
+%
+% Comments delimiters, we do turn this off for the manual
+morecomment=[s]{(*}{*)},
+%
+% Spaces are not displayed as a special character
+showstringspaces=false,
+%
+% String delimiters
+morestring=[b]",
+morestring=[d],
+%
+% Size of tabulations
+tabsize=3,
+%
+% Enables ASCII chars 128 to 255
+extendedchars=false,
+%
+% Case sensitivity
+sensitive=true,
+%
+% Automatic breaking of long lines
+breaklines=false,
+%
+% Default style fors listings
+basicstyle=\small,
+%
+% Position of captions is bottom
+captionpos=b,
+%
+% flexible columns
+columns=[l]flexible,
+%
+% Style for (listings') identifiers
+identifierstyle={\ttfamily\color{black}},
+% Style for declaration keywords
+keywordstyle=[1]{\ttfamily\color{navy}},
+% Style for gallina keywords
+keywordstyle=[2]{\ttfamily\color{dkgreen}},
+% Style for sorts keywords
+keywordstyle=[3]{\ttfamily\color{strawberry}},
+% Style for tactics keywords
+keywordstyle=[4]{\ttfamily\color{mauve}},
+% Style for terminators keywords
+keywordstyle=[6]{\ttfamily\color{gray}},
+%Style for iterators
+%keywordstyle=[6]{\ttfamily\color{dkpink}},
+% Style for strings
+stringstyle=\ttfamily,
+% Style for comments
+commentstyle={\ttfamily\color{dkgreen}},
+%
+%moredelim=**[is][\ttfamily\color{red}]{/&}{&/},
+literate=
+    {->}{{$\rightarrow\;$}}1
+    {|-}{{$\vdash$}}1
+    {==}{{$\equiv\;$}}1
+    {forall}{{$\forall$}}1
+    {\{!!\}}{{\color{redish}{$\{!!\}$}}}1
+%
+}[keywords,comments,strings]
+
+\lstnewenvironment{agda}{\lstset{language=Agda}}{}
+\lstset{numbers=left, numberstyle=\tiny\color{gray}, stepnumber=1, numbersep=5pt, xleftmargin=2em,framexleftmargin=1.5em}
+\lstset{name=Code}
+\lstset{escapechar=@}
+
+% pour inliner dans le texte
+\def\hasqel{\lstinline[language=Agda, basicstyle=\small]}
+% pour inliner dans les tableaux / displaymath...
+\def\haskels{\lstinline[language=Agda, basicstyle=\scriptsize]}
+
+
+\lstset
+{%
+  alsoletter=\star,% to prevent \opstyle from being applied to digits
+}
+
+%%% Local Variables: 
+%%% mode: latex
+%%% Local IspellDict: british
+%%% TeX-master: "main.tex"
+%%% End: 

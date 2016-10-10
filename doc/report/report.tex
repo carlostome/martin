@@ -1,0 +1,200 @@
+\documentclass[11pt,a4paper]{scrartcl}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{todonotes}
+\usepackage{enumitem}  % http://www.ctan.org/pkg/enumitem
+\usepackage[noabbrev]{cleveref}
+\usepackage{fancyvrb}
+\usepackage{unicornsoflove}
+\usepackage{hyperref}
+
+ \DefineVerbatimEnvironment
+   {code}{Verbatim}
+   {} % Add fancy options here if you like.
+
+\author{Carlos Tomé Cortiñas
+  \and Fabian Thorand
+  \and Ferdinand van Walree
+  \and Renate Eilers
+  \and  \small{Department of Information and Computing Sciences, Utrecht University}
+  }
+\title{Stepwise construction of simple Agda programs}
+\subtitle{Research Report}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\end{abstract}
+
+\tableofcontents
+
+\section{Program Construction}
+
+\subsection{Assumptions and Restrictions}
+
+\begin{itemize}
+\item fully saturated functions (i.e.\ all parameters are occurring on the left
+  hand side of the definition)
+\item all types are in \texttt{Set}, the lowest level of the universe hierarchy
+\item data constructors don't have function arguments
+\end{itemize}
+
+\subsection{Rules of Construction}
+
+\begin{itemize}
+\item we
+\end{itemize}
+
+\paragraph{Case splitting}
+
+\begin{itemize}
+\item given a $n$-ary function $f : (x_1 : T_1) \rightarrow (x_2 : T_2\ x_1)
+  \rightarrow \cdots \rightarrow T_{n+1}\ x_1\ \ldots\ x_n $ where the argument
+  types can depend on the values of the arguments to their left, where
+  $T_i\ x_1\ \ldots\ x_{i-1}$ can be a function type, a data type or
+  \texttt{Set}. In the latter case, the arguments passed to $T_i$ do not
+  actually matter
+\item note that it is only possible to match on data types
+\item case splits are only allowed in definition clauses of the following form
+  \begin{equation}
+    \label{eq:f_def}
+    f\ p_1\ \ldots\ p_n = \mathbf{hole}
+  \end{equation}
+  where $p_1, \ldots, p_n$ denote the argument patterns and \textbf{hole} is a
+  metavariable. This means that we can only case split, if the whole right hand
+  side consists of a single hole.
+\item abstract syntax of patterns
+  \begin{equation}
+    \begin{array}{rcl}
+      x & \in & \mathbf{Var} \\
+      p & ::= & x \mid \mathbf{Constr}\ p_1\ \ldots\ p_n
+    \end{array}
+  \end{equation}
+\item a case split can only be applied to (possibly nested) variables in one of
+  the patterns, if the type of that variable is a data type (i.e.\ it has been
+  introduced by a \texttt{data} declaration)
+\item a successful case split on a variable $x$ replaces the current clause with
+  one new clause for every data constructor corresponding to the type of $x$,
+  replacing the occurrence of $x$ with a new pattern and fresh variables for
+  each constructor argument.
+  Only constructors whose type can be unified with the type of $x$ are
+  considered.
+  This is demonstrated in the example below.
+  \begin{lstlisting}[mathescape, gobble=4, language = agda]
+    data Foo : Nat -> Set where
+      Bar : Foo 0
+      Baz : forall {n} -> Foo (succ n)
+
+    foo : (n : Nat) -> Foo n -> Nat
+    foo zero Bar = {!!}
+    foo (succ n) Baz = {!!}
+  \end{lstlisting}
+  Case splitting on the second argument (after the first argument) in the first clause only introduced the
+  \texttt{Bar} constructor, as the type of the \texttt{Baz} constructor does not
+  unify with \texttt{Foo 0}.
+\item splitting variables can affect other patterns, e.g. by introducing dot
+  patterns\footnote{\url{http://agda.readthedocs.io/en/latest/language/function-definitions.html\#dot-patterns}}.
+  In the example above, this can be witnessed by first splitting on the second
+  argument, resulting in
+  
+  \begin{lstlisting}[mathescape, gobble=4, language = agda]
+    foo : (n : Nat) -> Foo n -> Nat
+    foo .0 Bar = {!!}
+    foo _ Baz = {!!}
+  \end{lstlisting}
+  
+\end{itemize}
+
+some heuristics to guide case splitting
+\begin{itemize}
+\item perform case splits in a breadth-first manner, i.e.\ first try split all
+  variables on the current level before trying to perform case splitting on the
+  variables nested inside constructor patterns.
+\item if all $n$ arguments are independent and every data type consists of at
+  most $m$ constructors, case splitting all variables on the top-most level
+  results in at most $m^n$ clauses.
+  In realistic examples making use of Agda's support for dependent types, we
+  expect this number to be a lot smaller.
+\item sometimes, it might only be possible to split a variable after first
+  having split some other arguments before it
+\end{itemize}
+
+\paragraph{Refinement}
+
+\begin{itemize}
+\item A refinement is the introduction of a (possibly) incomplete term of the
+  right type in a hole
+\item case splitting is not possible after starting to refine the right hand
+  side of a clause. If no solution can be found, backtracking is needed.
+\item if a hole requires a function, we can only fill it with a definition in
+  scope that has a matching type. For now, we do not support the introduction of
+  lambda expressions.
+\item a hole that requires a data type can be either refined with a data
+  constructor, a variable of the right type, or with function returning a value
+  of the required type.
+  For constructors and functions, new holes are introduced for every argument.
+  If the function is a recursive call, then at least one of the arguments must
+  be structurally smaller.
+\item search depth must be limited to prevent the search from generating
+  infinitely nested data constructors.
+\end{itemize}
+
+some heuristics for refinement
+
+\begin{itemize}
+\item a variable of a correct type should always be preferred over introducing
+  data constructors or function calls. \todo{Add reasoning for that}
+\end{itemize}
+
+\subsection{Combining case split and refinement}
+
+\begin{itemize}
+\item every clause of the definition is independent from all others
+\item the basic algorithm should always first try to find a solution for the
+  right hand side of a clause, and only if that fails, perform another case
+  split.
+\item we should investigate whether it is possible to retain partial solutions
+  between to attempts of solving the same goal, that only differ in some
+  additional case splits.
+\end{itemize}
+
+\subsection{Introducing Properties}
+
+\begin{itemize}
+\item basic properties on some function $f$ should be of the following shape
+  \begin{equation}
+    \label{eq:prop}
+    \forall \vec{x}. f\ t_1\ \ldots\ t_n \equiv t_{n+1}
+  \end{equation}
+  where $t_1, \ldots, t_{n+1}$ are terms possibly involving some of the
+  universally quantified variables.
+  This provides simple means for stating relations between the inputs and result
+  of a function.
+\item investigate whether we can handle universal quantification in properties
+\item Before starting the refinement phase, we can check which properties apply
+  to the current clause. Then we can use Agda to (partially) normalize the
+  property expression, resulting in an expression, that might contain additional
+  metavariables. But even these partial results can be used to restrict the set
+  of possible solutions to a hole, if the metavariables only occur inside some
+  constructors.
+\item investigate whether properties can be used for guiding case splits
+%\item Consider the following example, where we have the property $\forall x. x +
+%  0 \equiv x$ and the following code fragment
+\end{itemize}
+
+\subsection{The Strategy}
+
+TODO
+
+\bibliographystyle{plain}
+\bibliography{literature}
+
+\end{document}
