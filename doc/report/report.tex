@@ -120,8 +120,17 @@ some heuristics to guide case splitting
   In realistic examples making use of Agda's support for dependent types, we
   expect this number to be a lot smaller.
 \item sometimes, it might only be possible to split a variable after first
-  having split some other arguments before it, although we are not sure (yet)
-  for which programs this is the case and whether it will affect our approach.
+  having split some other arguments before it. An (admittedly rather contrived)
+  example for this behaviour is shown below:
+  
+  \begin{lstlisting}[mathescape, gobble=4, language = agda]
+    contrived : (m n : Nat) -> n + m == m + n -> m + n == n + m
+    contrived m n p = ?
+  \end{lstlisting}
+
+  Although trivially solvable using a more general definition of symmetry, in this
+  specific instance Agda is unable to pattern match on \texttt{p} because it
+  cannot normalise the expressions in the $\equiv$-expressions.
 \item a good guess for the order in which to perform case splitting might be the
   topological sorted dependency graph of the argument types, starting with the
   arguments on which no further arguments depend.
@@ -237,6 +246,39 @@ solution to an Agda program.
   lead to a successful completion of the right hand side
 \item the refinement strategy is guided by the steps taken by the proof search
 \end{itemize}
+
+\subsection{Examples}
+
+\todo[inline]{elaborate on some examples by showing the search for a solution in
+detail (i.e.\ including the unifications necessary)}
+
+\paragraph{map function} A stepwise construction of a map function on vectors,
+including the intermediate goal types.
+\begin{enumerate}
+\item The initial program
+\begin{lstlisting}[mathescape, language = agda]
+data Nat : Set where
+  zero : Nat
+  succ : Nat -> Nat
+
+data Vec (a : Set) : Nat -> Set where
+  Nil  : Vec a zero
+  Cons : forall {n} -> a -> Vec a n -> Vec a (succ n)
+  
+map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
+map f xs = {!!}
+\end{lstlisting}
+The type of the hole is \lstinline[language=agda]|Vec B n| where A, B and n are
+implicit. The argument types are \lstinline[language=agda]|f : A -> B| and
+\lstinline[language=agda]|xs : Vec A n|. Searching for refinements using only
+definitions in scope would lead to the tautological definition
+\lstinline[language=agda]|map f xs|, which will be rejected because the
+arguments are not structurally smaller.
+
+\item The only parameter that can be split is \texttt{xs}
+
+\end{enumerate}
+
 
 \bibliographystyle{plain}
 \bibliography{literature}
