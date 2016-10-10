@@ -6,13 +6,15 @@ module Lib
     ) where
 
 import qualified Agda.Syntax.Abstract as A
+import Agda.Syntax.Translation.ConcreteToAbstract
 import Agda.Syntax.Concrete
 import Agda.Syntax.Common
+import Agda.Main
 import Agda.Syntax.Parser
 import Agda.Syntax.Literal
 import Agda.Syntax.Fixity
 import Agda.Utils.FileName
-
+import Control.Monad.IO.Class
 
 -- Two ways of parsing agda programs
 -- Either we parse a full agda program from a file
@@ -24,9 +26,11 @@ someFunc :: IO ()
 someFunc = do
     -- Parse an agda file and debugprint it
     -- Requires the path to be absolute
-    let path = "/home/ferdinand/University/TFL/martin/examples/Example.agda"
+    let path = "/home/ferdinand/University/TFL/martin/examples/Example2.agda"
     s <- parseFile' moduleParser (mkAbsolute path)
-    putStrLn $ dprint s
+    runTCMPrettyErrors $ test s
+    --putStrLn $ dprint s
+    --putStrLn $ show s
 
     -- Parse an expression and debugprint it
     -- s <- getLine
@@ -35,6 +39,10 @@ someFunc = do
     -- Pretty print any agda syntax
     -- putStrLn $ show s
     return ()
+
+test concrt = do
+    abstr <- toAbstract concrt
+    liftIO $ putStrLn $ show abstr
 
 
 -- For now the idea is to write an instance for each datatype that we 
@@ -53,7 +61,7 @@ instance DebugPrint ([Pragma],[Declaration]) where
     dprint (_, decls) = foldr (\x acc -> dprint x ++ "\n" ++ acc) "" decls
 
 instance DebugPrint Declaration where
-    dprint (TypeSig argInfo n e) = "TypeSig " ++ dprint n ++ " " ++ dprint e ++ ""
+    dprint (TypeSig argInfo n e) = "TypeSig " ++ show argInfo ++ " " ++ dprint n ++ " " ++ dprint e ++ ""
     dprint (Field _ _ _) = "Field"
     dprint (FunClause lhs rhs whereCl b) = "FunClause " ++ dprint lhs ++ " " ++ dprint rhs
                                             ++ " " ++ dprint whereCl ++ show b
@@ -90,6 +98,7 @@ instance DebugPrint LHS where
 instance DebugPrint a => DebugPrint (RHS' a) where
     dprint AbsurdRHS = "AbsurdRHS"
     dprint (RHS e) = "(RHS " ++ dprint e ++ ")"
+
 
 instance DebugPrint Pattern where
     dprint (IdentP qn) = "(IdentP " ++ dprint qn ++ ")"
@@ -149,7 +158,7 @@ instance DebugPrint Expr where
     dprint (Lam _ vars e) = "Lam"
     dprint (AbsurdLam _ hiding) = "AbsurdLam"
     dprint (ExtendedLam _ xs) = "ExtendedLam"
-    dprint (Fun _ e1 e2) = "Fun"
+    dprint (Fun _ e1 e2) = "(Fun " ++ dprint e1 ++ " " ++ dprint e2 ++ ")"
     dprint (Pi telesc e) = "Pi"
     dprint (Set r) = "Set"
     dprint (Prop r) = "Prop"
