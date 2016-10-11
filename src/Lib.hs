@@ -1,5 +1,6 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Lib
     ( someFunc
@@ -7,6 +8,7 @@ module Lib
 
 import qualified Agda.Syntax.Abstract as A
 import Agda.Syntax.Translation.ConcreteToAbstract
+import Agda.TheTypeChecker
 import Agda.Syntax.Concrete
 import Agda.Syntax.Common
 import Agda.Main
@@ -16,19 +18,26 @@ import Agda.Syntax.Fixity
 import Agda.Utils.FileName
 import Control.Monad.IO.Class
 
+import Agda.Syntax.Abstract.Pretty
+
 -- Two ways of parsing agda programs
 -- Either we parse a full agda program from a file
 -- or we parse a given expression
 
 -- The Agda library contains a pretty printer, which can be
 -- called with show
+
+pt = "/mnt/win/Documenten/CS/TFL/martin/examples/Example2.agda"
+
+pt1 = parseFile' moduleParser (mkAbsolute pt)
+
 someFunc :: IO ()
 someFunc = do
     -- Parse an agda file and debugprint it
     -- Requires the path to be absolute
-    let path = "/home/ferdinand/University/TFL/martin/examples/Example2.agda"
+    let path = "/mnt/win/Documenten/CS/TFL/martin/examples/Example2.agda"
     s <- parseFile' moduleParser (mkAbsolute path)
-    runTCMPrettyErrors $ test s
+    runTCMPrettyErrors $ test (snd s)
     --putStrLn $ dprint s
     --putStrLn $ show s
 
@@ -36,13 +45,19 @@ someFunc = do
     -- s <- getLine
     -- putStrLn $ dprint $ parse exprParser s
 
+
     -- Pretty print any agda syntax
     -- putStrLn $ show s
     return ()
 
 test concrt = do
     abstr <- toAbstract concrt
-    liftIO $ putStrLn $ show abstr
+    liftIO $ putStrLn "abstr"
+    pretty <- showA abstr
+    liftIO $ putStrLn pretty
+    check <- checkDecls abstr      
+    liftIO $ putStrLn $ show check  
+
 
 
 -- For now the idea is to write an instance for each datatype that we 
