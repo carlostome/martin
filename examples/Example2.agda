@@ -5,5 +5,5 @@ data Nat : Set where
   succ : Nat → Nat
 
 fooadd : Nat → Nat → Nat
-fooadd x zero = {!!}
-fooadd x (succ y) = succ {!!}
+fooadd x zero = {!0!}
+fooadd x (succ y) = succ {!0!}

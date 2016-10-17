@@ -8,6 +8,7 @@ module Lib
 
 import qualified Agda.Syntax.Abstract as A
 import Agda.Syntax.Translation.ConcreteToAbstract
+import Agda.Syntax.Translation.AbstractToConcrete
 import Agda.TheTypeChecker
 import Agda.Syntax.Concrete
 import Agda.Syntax.Common
@@ -17,8 +18,13 @@ import Agda.Syntax.Literal
 import Agda.Syntax.Fixity
 import Agda.Utils.FileName
 import Control.Monad.IO.Class
+import Control.Monad.State.Strict
+import Control.DeepSeq
 
 import Agda.Syntax.Abstract.Pretty
+
+import ProofSearch
+import Translation
 
 -- Two ways of parsing agda programs
 -- Either we parse a full agda program from a file
@@ -27,7 +33,9 @@ import Agda.Syntax.Abstract.Pretty
 -- The Agda library contains a pretty printer, which can be
 -- called with show
 
+--Add individual paths
 pt = "/mnt/win/Documenten/CS/TFL/martin/examples/Example2.agda"
+pathFer = "/home/ferdinand/University/TFL/martin/examples/Example2.agda"
 
 pt1 = parseFile' moduleParser (mkAbsolute pt)
 
@@ -35,7 +43,7 @@ someFunc :: IO ()
 someFunc = do
     -- Parse an agda file and debugprint it
     -- Requires the path to be absolute
-    let path = "/mnt/win/Documenten/CS/TFL/martin/examples/Example2.agda"
+    let path = pathFer
     s <- parseFile' moduleParser (mkAbsolute path)
     runTCMPrettyErrors $ test (snd s)
     --putStrLn $ dprint s
@@ -52,11 +60,21 @@ someFunc = do
 
 test concrt = do
     abstr <- toAbstract concrt
-    liftIO $ putStrLn "abstr"
-    pretty <- showA abstr
-    liftIO $ putStrLn pretty
-    check <- checkDecls abstr      
-    liftIO $ putStrLn $ show check  
+    --liftIO $ putStrLn "abstr"
+    liftIO $ putStrLn $ show abstr
+    hdb <- runStateT (makeRules abstr) []
+    liftIO $ putStrLn $ printRules $ fst hdb
+    --liftIO $ putStrLn pretty
+    --conctr' <- runAbsToCon $ toConcrete abstr
+    --liftIO $ putStrLn $ dprint $ head conctr'
+    --check <- checkDecls abstr    
+    --liftIO $ putStrLn $ show check
+    return ()
+
+printRules :: HintDB -> String
+printRules [] = ""
+printRules (x:xs) = show x ++ "\n" ++ printRules xs
+
 
 
 
@@ -74,6 +92,9 @@ class DebugPrint a where
 
 instance DebugPrint ([Pragma],[Declaration]) where
     dprint (_, decls) = foldr (\x acc -> dprint x ++ "\n" ++ acc) "" decls
+
+instance DebugPrint [Declaration] where
+    dprint = foldr (\x acc -> dprint x ++ "\n" ++ acc) ""
 
 instance DebugPrint Declaration where
     dprint (TypeSig argInfo n e) = "TypeSig " ++ show argInfo ++ " " ++ dprint n ++ " " ++ dprint e ++ ""
@@ -118,7 +139,7 @@ instance DebugPrint a => DebugPrint (RHS' a) where
 instance DebugPrint Pattern where
     dprint (IdentP qn) = "(IdentP " ++ dprint qn ++ ")"
     dprint (QuoteP r) = "QuoteP"
-    dprint (AppP ptrn nptrn) = error "AppP"
+    dprint (AppP ptrn nptrn) = "(AppP " ++ dprint ptrn ++ " " ++ show nptrn ++ ")"
     dprint (RawAppP r ptrns) = "(RawpAppP " ++ dprints ptrns ++ ")"
     dprint (OpAppP _ qn sn nptrns) = error "OpAppP"
     dprint (HiddenP _ np) = error "HiddenP"
@@ -129,6 +150,8 @@ instance DebugPrint Pattern where
     dprint (AsP _ n p) = "(AsP " ++ dprint n ++ " " ++ dprint p ++ ")"
     dprint (DotP _ e) = "(DotP " ++ dprint e ++ ")"
     dprint (LitP lit) = "(LitP " ++ dprint lit ++ ")"
+
+
 
 instance DebugPrint a => DebugPrint (WhereClause' [a]) where
     dprint NoWhere = "NoWhere"
