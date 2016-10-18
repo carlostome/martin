@@ -113,6 +113,9 @@ data Proof = Proof
   -- ^ the rule that is proved by this proof
   , proofArgs :: [Proof]
   -- ^ the proofs of the premises of the rule
+  , proofTerm :: PsTerm
+  -- ^ the term being proven on this level
+  -- REMARK: added this field to allow caching of intermediate results, if somehow feasible
   }
   deriving (Eq, Ord, Show, Read)
 
@@ -147,10 +150,10 @@ ruleArity = length . rulePremises
 -- | Applies a rule of arity @n@ to a list of proof by using the first @n@ proofs
 -- as proofs for its premises, and replacing them with a proof of the rule itself.
 -- The remaining proofs are not modified.
-apply :: Rule -> [Proof] -> [Proof]
-apply r xs = new : rest where
+apply :: PsTerm -> Rule -> [Proof] -> [Proof]
+apply goal r xs = new : rest where
   n = ruleArity r
-  new = Proof (ruleName r) (take n xs)
+  new = Proof (ruleName r) (take n xs) goal
   rest = drop n xs
 
 -- | Solves a partial proof given a set of rules.
@@ -168,7 +171,7 @@ solveAcc rules (PartialProof (g : gs) p) = StateT $ wrap $ map (instantiateRule 
       -- apply substitution to remaining goals and add the rules premises as new goals
       let gs' = subst mgu (rulePremises r ++ gs)
       -- build new partial proof with the new list of goals
-          prf = PartialProof gs' (p . apply r)
+          prf = PartialProof gs' (p . apply g r)
       -- solve recursively
       solveAcc rules prf
 
@@ -287,5 +290,5 @@ testGoal2 = con "Vec" (con "B") (con "suc" (con "n'"))
 itWorks = map ppProof $ dfs $ cutoff 6 $ solve testGoal2 testRules2
 
 ppProof :: Proof -> String
-ppProof (Proof r [])   = r
-ppProof (Proof r args) = "(" ++ unwords (r : map ppProof args) ++ ")"
+ppProof (Proof r [] g)   = "(" ++ r ++ " : " ++ show g ++ ")"
+ppProof (Proof r args g) = "(" ++ unwords (r : map ppProof args) ++ " : " ++ show g ++ ")"
