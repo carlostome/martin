@@ -215,4 +215,12 @@ TSWLatexianTemp*
 *~[0-9]*
 
 # auto folder when using emacs and auctex 
-/auto/*
+auto/
+
+# Agda
+*.agdai
+
+# No generated files in git repository
+doc/research-proposal/research-proposal.pdf
+doc/report/report.pdf
+
