@@ -8,6 +8,8 @@ import           Data.Functor.Const
 import           Data.Map            (Map)
 import qualified Data.Map            as Map
 
+import SearchTree
+
 -- | The type of variable identifiers. In contrast to the paper,
 -- this implementation currently relies on human readable strings.
 -- For one, it can make the state of the proof search more easy to read,
@@ -123,23 +125,6 @@ data PartialProof = PartialProof
   -- ^ a function generating a proof from the proofs of the subgoals
   }
 
--- | A tree that only stores data in the leaves.
-data SearchTree a = Leaf a | Node [SearchTree a]
-  deriving (Eq, Ord, Show, Read)
-
-instance Functor SearchTree where
-  fmap f (Leaf x)  = Leaf (f x)
-  fmap f (Node xs) = Node (map (fmap f) xs)
-
-instance Applicative SearchTree where
-  pure = Leaf
-  (Leaf f) <*> x = fmap f x
-  (Node xs) <*> x = Node $ map (<*> x) xs
-
-instance Monad SearchTree where
-  Leaf x >>= f = f x
-  Node xs >>= f = Node $ map (>>= f) xs
-
 -- | The internal state of the proof search.
 data SearchState = SearchState
   { freshId :: Int
@@ -189,13 +174,6 @@ solveAcc rules (PartialProof (g : gs) p) = StateT $ wrap $ map (instantiateRule 
 
 solve :: PsTerm -> HintDB -> SearchTree Proof
 solve goal rules = evalStateT (solveAcc rules (PartialProof [goal] head)) (SearchState 0)
-
--- | Performs a bounded depth-first search of a 'SearchTree'.
-dfs :: Int -> SearchTree a -> [a]
-dfs _ (Leaf x) = [x]
-dfs n (Node xs)
-  | n > 0 = concatMap (dfs (n - 1)) xs
-  | otherwise = []
 
 -- this is just some test
 
@@ -306,7 +284,7 @@ testGoal2 = con "Vec" (con "B") (con "suc" (con "n'"))
 -- | this generates @cons (f x) (map f xs))@ and @(map f (cons x xs))@ for the aforementioned map function,
 -- the former is is correct, the latter is not making a structurally smaller call, but the algorithm itself
 -- seems to work
-itWorks = map ppProof $ dfs 6 $ solve testGoal2 testRules2
+itWorks = map ppProof $ dfs $ cutoff 6 $ solve testGoal2 testRules2
 
 ppProof :: Proof -> String
 ppProof (Proof r [])   = r
