@@ -13,6 +13,7 @@
 \usepackage{fancyvrb}
 \usepackage{unicornsoflove}
 \usepackage{hyperref}
+\usepackage{bussproofs}
 
  \DefineVerbatimEnvironment
    {code}{Verbatim}
@@ -100,13 +101,13 @@
   patterns\footnote{\url{http://agda.readthedocs.io/en/latest/language/function-definitions.html\#dot-patterns}}.
   In the example above, this can be witnessed by first splitting on the second
   argument, resulting in
-  
+
   \begin{lstlisting}[mathescape, gobble=4, language = agda]
     foo : (n : Nat) -> Foo n -> Nat
     foo .0 Bar = {!!}
     foo _ Baz = {!!}
   \end{lstlisting}
-  
+
 \end{itemize}
 
 some heuristics to guide case splitting
@@ -122,7 +123,7 @@ some heuristics to guide case splitting
 \item sometimes, it might only be possible to split a variable after first
   having split some other arguments before it. An (admittedly rather contrived)
   example for this behaviour is shown below:
-  
+
   \begin{lstlisting}[mathescape, gobble=4, language = agda]
     contrived : (m n : Nat) -> n + m == m + n -> m + n == n + m
     contrived m n p = ?
@@ -135,7 +136,7 @@ some heuristics to guide case splitting
   topological sorted dependency graph of the argument types, starting with the
   arguments on which no further arguments depend.
   In the type signature
-  
+
   \begin{lstlisting}[mathescape, gobble=4, language = agda]
     (m n : Nat) -> (p : m == n) -> n == m
   \end{lstlisting}
@@ -264,7 +265,7 @@ data Nat : Set where
 data Vec (a : Set) : Nat -> Set where
   Nil  : Vec a zero
   Cons : forall {n} -> a -> Vec a n -> Vec a (succ n)
-  
+
 map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
 map f xs = {!!}
 \end{lstlisting}
@@ -279,6 +280,272 @@ arguments are not structurally smaller.
 
 \end{enumerate}
 
+\section{Formalization}
+
+In this section, we formalize the subset of Agda we are interested in for
+deriving automatically a program that satisfices some type.
+
+\subsection{Patterns}
+
+A pattern is a tree like structure that may be either a variable or a type
+constructor applied to other patterns. When case splitting we should be able to
+do so either in a top level variable or a possibly nested variable inside the
+pattern. As an invariant we know that the variables appearing all along the
+patterns are unique.
+
+\begin{equation}
+  \begin{array}{rcl}
+    x & \in & \mathbf{Var} \\
+    p & ::= & x \mid \mathbf{Constr}\ p_1\ \ldots\ p_n
+  \end{array}
+\end{equation}
+
+We define the following function that given a pattern it returns the set of
+variables that it contains.
+
+\begin{equation}
+  \begin{array}{rcl}
+    vars(x) & = & \{x\} \\
+    vars(\mathbf{Constr}\ p_1\ \ldots\ p_n) & = & \bigcup_{i=1}^{n} vars(p_i)
+  \end{array}
+\end{equation}
+
+Another important consideration is that we need a function that allows us to
+replace a pattern variable by a new pattern in case we are case splitting in
+such variable. Of course it is not straightforward as variables in patterns
+might be nested withing type constructors.
+
+\begin{equation}
+  \begin{array}{rcl}
+    replace(x,p,y) & = & y\\
+    replace(x,p,x) & = & p\\
+    replace(x,p,\mathbf{Constr}\ p_1\ \ldots\ p_n) & = & \mathbf{Constr}\
+    replace(x,p,p_1) \ldots replace(x,p,p_n)
+  \end{array}
+\end{equation}
+
+\subsection{Type}
+
+% The types we consider are either $Set$, D_i
+
+\subsection{Expression}
+
+An expression is part of the right hand side of a function clause. We consider
+as expressions either a variable possibly applied to a number of other
+expressions, or a type constructor applied to a list of expressions or a hole
+that we denote with \textbf{?}.
+
+It is important to note that unlike raw Agda, we do not consider the posibility
+that expressions may be themselves lambda abstractions which would lead us to
+higher order unification during proof search which is known to be undecidable.
+In the case an auxiliary function is needed it must be already avaliable from
+another top level binding.
+
+\begin{equation}
+  \begin{array}{rcl}
+    e & ::= & x\ e_1 \ldots e_n\ (x \in \mathbf{Var})\ \mid\ \mathbf{Constr}\
+    e_1\ \ldots\ e_n\ \mid\ \textbf{?}
+  \end{array}
+\end{equation}
+
+We call an expression \textit{complete} if it does not have any hole \textbf{?}
+remaining either in the top level or in any of its subexpressions. We can define
+a function that computes this.
+
+\begin{equation}
+  \begin{array}{rcl}
+    complete?(\textbf{?}) & = & \textbf{F} \\
+    complete?(\mathbf{Constr}\ e_1\ \dots\ e_n) & = &\textbf{T}\ \bigwedge_{i=1}^{n}
+    complete?(e_i)\\
+    complete?(x\ e_1\ \ldots\ e_n) & = & \textbf{T}\ \bigwedge_{i=1}^{n}
+    complete?(e_i)
+  \end{array}
+\end{equation}
+
+\subsection{Clause}
+
+A function definition is just a set of clauses that relate a set of patterns
+with an expression.
+
+If any of the patterns in the left hand side is a type constructor, then there
+should be a function clause for every other possible (well typed) constructor of
+the type so the full type is covered by the clauses. We will suppose from now on
+that this is the case.
+
+In order to facilitate the formalization, we are going to explicitly type every
+pattern and the resulting expression. Note that in this case we omit possible
+dependencies on the types given other patterns. This will be made again explicit
+when we define the step relation.
+
+\begin{equation}
+  \begin{array}{rcl}
+    c & ::= & (p_1\ :\ T_1)\ (p_2\ :\ T_2)\ \dots\ (p_n\ :\ T_n)=\ (e : T_{n+1})\ \mid\
+    \bigwedge_{i=1}^{n} c_i
+  \end{array}
+\end{equation}
+
+We also define a function that can inspect a clause and decide whether or not we
+have reached a complete definition. We call a clause \textit{complete} when the right
+hand side expression is \textit{complete}.
+
+\begin{equation}
+  \begin{array}{rcl}
+    complete?((p_1 : T_1)\ (p_2 : T_2) \dots (p_n : T_n)=\ (e :
+    T_{n+1})) & = & complete?(e)\\
+    complete?(\bigwedge_{i=1}^{n} c_i) & = & \bigwedge_{i=1}^{n} complete?(c_i)
+  \end{array}
+\end{equation}
+
+\subsection{Step relation $\leadsto$}
+
+We can now give the full definition of what a step means. We are going to
+characterize a step as a relation on \textbf{Clause}. We have to include in this
+relation a signature $\Sigma$ that contains the relevant information for types
+and a context $\Gamma$ of any other relevant functions that may be avaliable.
+
+This relation is not deterministic. At each step we can choose to try the proof
+search algorithm on the hole in the right hand side, or perform a case split on
+some variable in the left hand side of the clause. We restric as Agda the case
+split only to the case where the full expression in the right hand side is still
+a hole and has not been partially fullfiled.
+
+Now we can give the first rule that relates two clauses where in the second one
+the hole has been succesfully filled by an expression found by the proof search
+algorithm.
+
+\begin{figure}[h]
+  \centering
+  \footnotesize
+  \AxiomC{\textit{proof search}$(\Sigma, extend(\Gamma,p) , T_{n+1}\ p_1\dots p_n) = e$}
+  \AxiomC{$complete?(e)$}
+  \RightLabel{Step\_Proof\_Search}
+  \BinaryInfC{$\Sigma ; \Gamma \vdash (p_1:T_1) \dots (p_n : T_n\ p_1 \dots p_{n-1})\
+  =\ (\textbf{?}:T_{n+1}\ p_1\dots p_n) $}
+  \noLine
+  \UnaryInfC{$\leadsto$}
+  \noLine
+  \UnaryInfC{$\Sigma ; \Gamma \vdash
+  (p_1:T_1) \dots (p_n : T_n\ p_1 \dots p_{n-1})\
+=\ (e:T_{n+1}\ p_1\dots p_n)$}
+  \DisplayProof
+\end{figure}
+
+The second rule that we need to define is the one that relates two clauses when
+the actual case split is performed. In this case is not just a rule, but a rule
+schema that can be instatiated for every possible variable on where we can
+perform the splitting. This is denoted as a subscribe in $\leadsto_{k:x}$.
+
+\begin{figure}[h]
+  \centering
+  \footnotesize
+  \AxiomC{\textit{constructors}$(\Sigma, T_k\ p_1 \dots p_{k-1}) = \mathbf{Constr}_1 \dots \mathbf{Constr}_m$}
+  \AxiomC{$x \in vars(p_k)$}
+  \AxiomC{$x_1 \dots x_j \in \textbf{fresh}$}
+  \RightLabel{Step\_Case\_Split}
+  \TrinaryInfC{$\Sigma ; \Gamma \vdash
+    (p_1:T_1) \dots (p_k : T_k\ p_1 \dots p_{k-1}) \dots (p_n : T_n\ p_1 \dots
+    p_{n-1})\ =\ (\textbf{?}:T_{n+1}\ p_1\dots p_n)$}
+  \noLine
+  \UnaryInfC{$\leadsto_{k:x}$}
+  \noLine
+  \UnaryInfC{$\Sigma ; \Gamma \vdash \bigwedge_{i=1}^{m} (\dot{p_1} : T_1) \dots
+  (replace(p_k, x, \mathbf{Constr}_i\ x_1 \dots x_j) : T_i\ {p_1} \dots {p_{i-1}})
+    \dots (\dot{p_n} : T_n\ \dot{p_1} \dots
+    \dot{p_{n-1}})\ =\ (\textbf{?}:T_{n+1}\ \dot{p_1}\dots \dot{p_n})$}
+  \DisplayProof
+\end{figure}
+
+In this rule, when we try to pattern match on a variable,. The resulting clause
+is a compound of the original clause where the variable under consideration has
+been replaced by each one of the constructors of the type. Moreover, because we
+are dealing with dependent types it is important to note that pattern matching
+on a variable of a specific type might influence as well other variables in
+other patterns. We denote this by putting a dot over the patterns in the outcome
+clause.
+
+For the sake of completeness we also allow a step to take place in any of the
+single clauses that may appear within a compound clause.
+
+\begin{figure}[h]
+  \centering
+  \footnotesize
+  \AxiomC{$c_i \leadsto c'_i$}
+  \UnaryInfC{$\bigwedge c_1 \dots c_i \dots c_n \leadsto \bigwedge c_1 \dots c'_i \dots c_n $}
+  \DisplayProof
+\end{figure}
+
+Now we are able to say that a stepwise construction of a program is the 
+
+% \begin{figure}
+%   \AxiomC{\textit{constructors}$(\Sigma, T_i\ p_1 \dots p_{i-1}) = C_1 \dots C_m$}
+%   \AxiomC{$x \in vars(p_i)$}
+%   \RightLabel{Step\_Case\_Split}
+%   \UnaryInfC{$\Sigma ; \Gamma \vdash (p_1:T_1) \dots (p_i : T_i p_1 \dots
+%   p_{i-1}) \dots (p_n : T_n\ p_1 \dots p_{n-1})\
+%   =\ (\textbf{?}:T_{n+1}\ p_1\dots p_n) \leadsto_{x} (p_1:T_1) \dots (p_n:T_n\ p_1 \dots p_{n-1})\
+% =\ (\textbf{?}:T_{n+1}\ p_1\dots p_n)$} \wedge
+%   \DisplayProof
+% \end{figure}
+
+
+% a function is a pair of a type and a set of clauses
+% f = (t , cl)
+
+% a clause is of the form p_1 \dots p_n = e
+% we define the valid operations as a relation on clause -> {clause}
+
+% fn p_1 \dots p_n = ? \rightarrow {f
+% $fun : (x_1 : T_1) \rightarrow (x_2 : T_2\ x_1) \rightarrow \cdots \rightarrow T_{n+1}\ x_1\ \ldots\ x_n$
+
+% $\Sigma ; \Gamma \vdash (p_1\ :\ T_1)\ (p_2\ :\ T_2\ p_1)\ \dots\ (p_n\ :\ T_n\ p_1\ \dots\ p_{n-1})\
+% =\ (\textbf{?}\ :\ T_{n+1}\ p_1\ \ldots\ p_n) \leadsto \{ p_1 \dots c \dots p_n = ?
+%   | c \in C \} $
+
+% We define a relation between clauses that would serve as a basis for generating
+% a step wise based strategy for solving the problem.
+
+% The relation we define $\leadsto$ is not deterministic as the
+
+
+% \begin{figure}
+%   \AxiomC{}
+%   \RightLabel{T\_Env\_Empty}
+%   \UnaryInfC{$\Sigma ; \Gamma \vdash \bullet$}
+%   \DisplayProof
+% \end{figure}
+
+% \begin{figure}
+%   \AxiomC{$\Sigma ; \Gamma, x_1 : T_1,\ x_2 : T_2\ x_1\ \dots\ x_n : T_n\ x_1
+%   \dots x_{n-1} \vdash \bullet$}
+%   \RightLabel{T\_Env\_Extend}
+%   \UnaryInfC{$\Sigma ; \Gamma,\ x_1 : T_1,\ x_2 : T_2\ x_1\ \dots\ x_n : T_n\ x_1
+%   \dots x_{n-1},\ x_{n+1} : T_{n+1}\ x_1 \dots x_n \vdash \bullet$}
+%   \DisplayProof
+% \end{figure}
+
+
+
+% \begin{figure}
+%   \AxiomC{}
+%   \RightLabel{I-Constr}
+%   \UnaryInfC{$p_1 \dots p_i \dots p_n = ? \leadsto \{ p_1 \dots p_i \dots p_n =  $}
+%   \DisplayProof
+% \end{figure}
+
+% \begin{figure}
+%   \AxiomC{}
+%   \RightLabel{I-Fun}
+%   \UnaryInfC{$p_1 \dots p_i \dots p_n = ? \leadsto \{ p_1 \dots p_i \dots p_n =  $}
+%   \DisplayProof
+% \end{figure}
+
+% \begin{figure}
+%   \AxiomC{}
+%   \RightLabel{T-TFunc2}
+%   \UnaryInfC{$p_1 \dots p_i \dots p_n = ? \leadsto \{ p_1 \dots c \dots p_n = ?
+%   | c \in C \} $}
+%   \DisplayProof
+% \end{figure}
 
 \bibliographystyle{plain}
 \bibliography{literature}
