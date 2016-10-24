@@ -31,6 +31,8 @@ library
 executable martin-exe
   hs-source-dirs:      app
   main-is:             Main.hs
+  other-modules:       AgdaInteraction
+                       AgdaInteraction2
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , Agda
@@ -38,6 +40,7 @@ executable martin-exe
                      , transformers
                      , mtl
                      , containers
+                     , filepath
                      , unordered-containers
                      , optparse-applicative
                      , free

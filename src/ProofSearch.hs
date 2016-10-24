@@ -295,7 +295,7 @@ testGoal2 = con "Vec" (con "B") (con "suc" (con "n'"))
 -- | this generates @cons (f x) (map f xs))@ and @(map f (cons x xs))@ for the aforementioned map function,
 -- the former is is correct, the latter is not making a structurally smaller call, but the algorithm itself
 -- seems to work
-itWorks = map ppProof $ dfs $ cutoff 6 $ solve testGoal2 testRules2
+itWorks = dfs $ cutoff 10 $ solve testGoal2 testRules2
 
 ppProof :: Proof -> String
 ppProof (Proof r [] g)   = "(" ++ r ++ " : " ++ show g ++ ")"
