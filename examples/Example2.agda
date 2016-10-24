@@ -1,9 +1,33 @@
-module Example where
+module Example2 where
+
+postulate
+    Level : Set
+
+{-# COMPILED_TYPE Level () #-}
+{-# BUILTIN LEVEL Level #-}
+
+postulate
+ lzero : Level
+ lsuc  : (ℓ : Level) → Level
+ _⊔_   : (ℓ₁ ℓ₂ : Level) → Level
+ 
+{-# BUILTIN LEVELZERO lzero #-}
+{-# BUILTIN LEVELSUC  lsuc  #-}
+{-# BUILTIN LEVELMAX  _⊔_   #-}
 
 data Nat : Set where
   zero : Nat
   succ : Nat → Nat
 
-fooadd : Nat → Nat → Nat
-fooadd x zero = {!0!}
-fooadd x (succ y) = succ {!0!}
+data N : Set where
+    z : N
+    s : N -> N
+
+data V : Set where
+    v : V -> V
+
+id : Nat -> Nat
+id d = d
+
+id2 : V -> V -> Nat
+id2 n e = {!!}
