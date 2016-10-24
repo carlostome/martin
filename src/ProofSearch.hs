@@ -1,12 +1,15 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE DeriveGeneric     #-}
 module ProofSearch where
 
 import           Control.Monad.State
 import           Data.Functor.Const
 import           Data.Map            (Map)
 import qualified Data.Map            as Map
+import           Control.DeepSeq
+import           GHC.Generics
 
 import SearchTree
 
@@ -21,7 +24,12 @@ data VarIdent
   | Unique !String !Int
   -- ^ a variable name that has been made fresh by pairing it with a unique integer.
   -- These identifiers should not be created manually.
-  deriving (Eq, Ord, Show, Read)
+  deriving (Eq, Ord, Show, Read, Generic)
+
+instance NFData VarIdent
+instance NFData PsTerm
+instance NFData Rule
+
 type ConIdent = String
 type RuleIdent = String
 
@@ -34,7 +42,7 @@ makeUnique (Unique v _) = Unique v
 data PsTerm
   = Var !VarIdent          -- ^ a proof-variable (i.e. a universally quantified type variable)
   | Con !ConIdent [PsTerm] -- ^ a (type) constructor with a name and some arguments
-  deriving (Eq, Ord, Show, Read)
+  deriving (Eq, Ord, Show, Read, Generic)
 
 -- | A traversal of variables in a term. (type is compatible with lens)
 variables :: Applicative f => (VarIdent -> f VarIdent) -> PsTerm -> f PsTerm
@@ -102,7 +110,7 @@ data Rule = Rule
   { ruleName       :: RuleIdent
   , ruleConclusion :: PsTerm
   , rulePremises   :: [PsTerm]
-  } deriving (Eq, Ord, Show, Read)
+  } deriving (Eq, Ord, Show, Read, Generic)
 
 -- | A hint database is simply a list of rules that can be applied.
 type HintDB = [Rule]
