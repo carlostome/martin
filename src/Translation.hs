@@ -205,7 +205,7 @@ nameS = show . nameConcrete
 -- Proof to Abstract syntax
 
 proofToAbstract :: Proof -> HintDB -> Int -> TCM Expr
-proofToAbstract (Proof ruleIdent _) hdb n = do
+proofToAbstract (Proof ruleIdent _ _) hdb n = do
     let rule = find (\x -> ruleName x == ruleIdent) hdb
     e <- parseExpr noRange "zero"
     abstr <- toAbstract e

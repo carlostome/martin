@@ -24,6 +24,7 @@ import Control.DeepSeq
 import Agda.Syntax.Abstract.Pretty
 
 import ProofSearch
+import SearchTree
 import Translation
 
 -- Two ways of parsing agda programs
@@ -90,7 +91,7 @@ pipeline abstr n = do
         then return []
         else do
             liftIO $ putStrLn $ "goal: " ++ show (head g)
-            return $ dfs 2 $ solve (head g) hdb
+            return $ dfs $ cutoff 2 $ solve (head g) hdb
 
 
 printRules :: HintDB -> String
