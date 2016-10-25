@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, FlexibleContexts #-}
 module AgdaInteraction2 where
 
 import qualified Agda.Interaction.BasicOps                  as B
@@ -13,8 +13,9 @@ import qualified Agda.Syntax.Abstract                       as A
 import qualified Agda.Syntax.Abstract.Views                 as A
 import           Agda.Syntax.Abstract.Pretty
 import           Agda.Syntax.Common
-import           Agda.Syntax.Info
+import           Agda.Syntax.Info as I
 import           Agda.Syntax.Concrete
+import           Agda.Syntax.Concrete.Generic as C
 import           Agda.Syntax.Fixity
 import           Agda.Syntax.Literal
 import           Agda.Syntax.Parser
@@ -45,12 +46,19 @@ import           Control.DeepSeq
 import           Control.Monad.Except
 import           Control.Monad.IO.Class
 import           Control.Monad.State.Strict
+import Control.Monad.Writer
 import Control.Monad.Reader
 import qualified Data.List                                  as List
 import           System.FilePath                            ((</>))
 import Text.Printf
 
 import Debug.Trace
+
+import Data.Generics.Geniplate
+import Strategy
+import SearchTree
+import Data.List (partition)
+import Data.Monoid
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
@@ -82,22 +90,26 @@ type ExerciseM = ReaderT ExerciseEnv (StateT ExerciseState TCM)
 runInteractiveSession :: Int -> FilePath -> IO ()
 runInteractiveSession verbosity agdaFile = do
   -- load the Agda file
-  absPath <- absolute agdaFile
-  (pragmas, concreteDecls) <- parseFile' moduleParser absPath
-  -- TODO: inject pragmas
+  absPath            <- absolute agdaFile
+  (_, module'@([Module _ _ _ concreteDecls])) <- parseFile' moduleParser absPath
+  -- TODO: inject pragmas // Carlos: We shouldn't care about pragmas
   ret <- runTCMPrettyNoExit $ local (\e -> e { envCurrentPath = Just absPath }) $ do
     -- load Level primitives and setup TCM state
     initialState <- initAgda verbosity -- the number is the verbosity level, useful for debugging
     -- REMARK: initialState should now contain a snapshot of an initialized Agda session and can be used to quickly
     -- revert when we need to recheck the exercise code.
-    
+
     -- convert exercise to abstract syntax
-    abstractDecls <- toAbstract concreteDecls
+    abstractDecls <- toAbstract module'
 
     -- check that the exercise is valid to begin with
     checkDecls abstractDecls
+
+
     unfreezeMetas -- IMPORTANT: if metas are not unfrozen, we cannot refine etc.
-    
+
+    str <- generateStrategy initialState abstractDecls
+
     -- setup initial state and the environment
     let exState = ExerciseState
           { exerciseDecls = abstractDecls
@@ -112,10 +124,115 @@ runInteractiveSession verbosity agdaFile = do
     -- if all went well, st contains the solved exercise
     -- TODO: pretty print and send to teacher ;)
     return ()
-  -- print errors 
+  -- print errors
   case ret of
     Left err -> printf "Exercise session failed with\n%s\n" err
     Right _ -> return ()
+
+
+-- thereIsMeta :: Declaration -> Bool
+-- thereIsMeta = any . foldExpr f False
+--   where f (QuestionMark _ _) = True
+--         f _ = False
+
+type StrategyM a = ReaderT () TCM a
+
+-- | Generate a Strategy for a declaration that has metas.
+-- We know that if the right hand side is not a meta then 
+-- we can just try to fill the holes using proof search.
+-- Otherwise if the right hand side is a meta first we try 
+-- proof search, otherwise we split.
+genStrategy :: TCState
+            -> [A.Declaration]
+            -> (I.MetaInfo, InteractionId)
+            -> TCM ClauseStrategy
+genStrategy tcs prog (mi,ii) =
+  -- First we check whether the meta is in a top level rhs.
+  if checkTopLevel (mi,ii) prog
+     then do
+       --- HERE
+       let prfs = dfs $ cutoff 10 $ solve undefined undefined
+       case [] of
+        -- if we cannot find a solution we should split and then look for a
+        -- strategy in each of the clauses.
+        -- We should really try out every solution to see which of the fit.
+         [] -> do
+           let var = "n"
+           (_, newClauses) <- MC.makeCase ii noRange var
+           let newProg  = replaceClauses ii newClauses prog
+           put tcs
+           (newP, m) <- rebuildInteractionPoints' newProg
+           checkDecls newP
+           unfreezeMetas
+           -- allMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap (A.foldExpr f) newClauses]
+           -- newMetas = allMetas // (map fs
+
+           liftIO (print newClauses)
+           SplitStrategy var <$> mapM (genStrategy tcs newProg) undefined
+         prfs -> undefined
+     else
+       undefined
+  where
+    f e@(A.QuestionMark _ _) = [e]
+    f _                      = []
+
+-- | Replaces all question marks with fresh interaction points and registers them with the type checker.
+-- This step is necessary after resetting the type checker state.
+rebuildInteractionPoints' :: A.ExprLike e
+                          => e -> TCM (e,[(InteractionId, InteractionId)])
+rebuildInteractionPoints' e = runWriterT (A.traverseExpr go e) where
+  go (A.QuestionMark m ii) = do
+    nii <- lift $ registerInteractionPoint noRange Nothing
+    tell [(nii,ii)]
+    return (A.QuestionMark m nii)
+  go other = return other
+
+-- | Check if the Hole is in a top level position.
+checkTopLevel :: (I.MetaInfo, InteractionId) -> [A.Declaration] -> Bool
+checkTopLevel (mi, ii) = or . map look
+  where
+    look (A.Mutual _ decls)      = or $ map look decls
+    look (A.Section _ _ _ decls) = or $ map look decls
+    look (A.RecDef _ _ _ _ _ _ _ decls) = or $ map look decls
+    look (A.ScopedDecl _ decls)         = or $ map look decls
+    look (A.FunDef _ _ _ clauses) = or $ map lookClause clauses
+    look _ = False
+
+    lookClause cls = case A.clauseRHS cls of
+      A.RHS e -> isTopLevelHole e
+      _ -> False
+
+    isTopLevelHole (A.QuestionMark mi hole) = ii == hole
+    isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
+    isTopLevelHole _ = False
+
+lookForClause :: (I.MetaInfo, InteractionId) -> [A.Declaration] -> A.Clause
+lookForClause (mi, ii) prog = undefined
+  -- where
+  --   look (A.Mutual _ decls)      = or $ map look decls
+  --   look (A.Section _ _ _ decls) = or $ map look decls
+  --   look (A.RecDef _ _ _ _ _ _ _ decls) = or $ map look decls
+  --   look (A.ScopedDecl _ decls)         = or $ map look decls
+  --   look (A.FunDef _ _ _ clauses) = or $ map lookClause clauses
+  --   look _ = False
+
+  --   lookClause cls = case A.clauseRHS cls of
+  --     A.RHS e -> isTopLevelHole e
+  --     _ -> False
+
+  --   isTopLevelHole (A.QuestionMark mi hole) = ii == hole
+  --   isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
+  --   isTopLevelHole _ = False
+
+cycles :: [a] -> [[a]]
+cycles xs = take (length xs) $ iterate (\(x:xs) -> xs ++ [x]) xs
+
+-- | Generate a Strategy given a list of Declaration.
+-- Only one Declaration contains holes.
+generateStrategy :: TCState -> [A.Declaration] -> TCM [ClauseStrategy]
+generateStrategy tcs prog = do
+  let metas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi prog]
+  mapM (genStrategy tcs prog) metas
 
 -- | This is where all the exercise solving should happen
 exerciseSession :: ExerciseM ()
