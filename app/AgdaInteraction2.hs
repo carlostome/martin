@@ -19,6 +19,8 @@ import           Agda.Syntax.Fixity
 import           Agda.Syntax.Literal
 import           Agda.Syntax.Parser
 import           Agda.Syntax.Position
+import           Agda.Syntax.Scope.Base
+import qualified           Agda.Syntax.Internal.Names as I
 import           Agda.Syntax.Translation.AbstractToConcrete
 import           Agda.Syntax.Translation.ConcreteToAbstract
 import           Agda.TheTypeChecker
@@ -47,6 +49,8 @@ import Control.Monad.Reader
 import qualified Data.List                                  as List
 import           System.FilePath                            ((</>))
 import Text.Printf
+
+import Debug.Trace
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
@@ -159,6 +163,7 @@ exerciseSession = do
 -- with the list of new clauses.
 replaceClauses :: InteractionId -> [A.Clause] -> [A.Declaration] -> [A.Declaration]
 replaceClauses ii newClauses prog = map update prog where
+  -- recursively traverses all declarations to replace the clauses
   update (A.Mutual mi decls) = A.Mutual mi (map update decls)
   update (A.Section mi mn bnds decls) = A.Section mi mn bnds (map update decls)
   update (A.FunDef di qn del clauses) = A.FunDef di qn del $ concatMap updateClause clauses
@@ -171,21 +176,41 @@ replaceClauses ii newClauses prog = map update prog where
       -- the newly generated meta variables inherit the scope information of the
       -- variable they are replacing. Since we are operating on abstract syntax,
       -- which is the stage after scope checking, we need to track scope manually here.
+      -- initScope updates the local variables of the old meta variable's scope
       Just (mi, hole) | hole == ii -> map (initScope $ metaScope mi) newClauses
       _ -> [cls]
     A.WithRHS qn exprs clauses ->
       let newrhs = A.WithRHS qn exprs (concatMap updateClause clauses)
       in [cls { A.clauseRHS = newrhs}]
-    other -> [cls]
+    _ -> [cls]
 
+  -- checks whether there is a top level hole in the expression of a clause
   isTopLevelHole (A.QuestionMark mi hole) = Just (mi, hole)
   isTopLevelHole (A.ScopedExpr _ e) = isTopLevelHole e
-  isTopLevelHole other = Nothing
+  isTopLevelHole _ = Nothing
 
-  -- updates the scope of meta variables
-  initScope scope = A.mapExpr $ \e -> case e of
-    A.QuestionMark mi ii -> A.QuestionMark mi { metaScope = scope } ii
-    other -> other
+  initScope scope clause =
+    -- here we need to extract all the bound names in the patterns of the clause and insert
+    -- them into the top level scope
+    let locals = map (\n -> (A.nameConcrete n, LocalVar n)) $ clauseLocals $ A.clauseLHS clause
+        newScope = scope { scopeLocals = locals }
+        -- update scoped things in the expression with the new scope
+        updScope (A.ScopedExpr _ e) = A.ScopedExpr newScope e
+        updScope (A.QuestionMark mi hole) = A.QuestionMark mi { metaScope = newScope } hole
+        updScope o = o
+    in traceShowId $ A.mapExpr updScope clause
+
+  -- finds all local variables in a clause
+  -- REMARK: currently only works for patterns, not co-patterns
+  clauseLocals (A.LHS _ (A.LHSHead _ pats) _) = concatMap (patternDecls . namedThing . unArg) pats
+  clauseLocals _ = []
+
+  -- finds all variables bound in patterns, only constructors and variables supported so far
+  -- not sure what else we need, but we'll find out sooner or later
+  patternDecls (A.VarP n) = [n]
+  patternDecls (A.ConP _ _ a) = concatMap (patternDecls . namedThing . unArg) a
+  patternDecls (A.DefP _ _ a) = concatMap (patternDecls . namedThing . unArg) a
+  patternDecls _ = []
 
 -- | Replaces a hole identified by its interaction id with a new expression.
 replaceHole :: A.ExprLike e => InteractionId -> A.Expr -> e -> e
@@ -216,7 +241,7 @@ performUserAction hole action = do
       -- parse the user input in the given context
       given <- tcmToEx $ B.parseExprIn hole noRange estr
       -- try to refine the hole with the user expression
-      expr <- tcmToEx $ B.refine hole Nothing given
+      expr <- tcmToEx $ B.give hole Nothing given
       -- replace hole in AST
       replaceHole hole expr <$> gets exerciseDecls
     UserSplit var -> do
@@ -225,6 +250,13 @@ performUserAction hole action = do
       -- ctx seems only to be relevant when splitting in extended lambdas, not something we do
       replaceClauses hole newClauses <$> gets exerciseDecls
   -- type check
+  -- resetTCState
+  -- concr <- tcmToEx $ abstractToConcrete_ newprog
+  -- liftIO $ putStrLn "check"
+  -- resetTCState
+  -- liftIO $ print concr
+  -- newprogFoo <- tcmToEx $ toAbstract concr
+  -- liftIO $ print newprogFoo
   resetTCState
   -- rebuild interaction points (normally only created when going from concrete -> abstract)
   newprog' <- rebuildInteractionPoints newprog
@@ -249,7 +281,11 @@ undo = do
 -- This step is necessary after resetting the type checker state.
 rebuildInteractionPoints :: A.ExprLike e => e -> ExerciseM e
 rebuildInteractionPoints = tcmToEx . A.traverseExpr go where
-  go (A.QuestionMark m ii) = A.QuestionMark m <$> registerInteractionPoint noRange Nothing
+  go (A.QuestionMark m ii) = do
+    liftIO $ do
+      printf "Scope at %s\n" (show ii)
+      print (metaScope m)
+    A.QuestionMark m <$> registerInteractionPoint noRange Nothing
   go other = return other
 
 
