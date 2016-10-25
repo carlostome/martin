@@ -198,7 +198,7 @@ replaceClauses ii newClauses prog = map update prog where
         updScope (A.ScopedExpr _ e) = A.ScopedExpr newScope e
         updScope (A.QuestionMark mi hole) = A.QuestionMark mi { metaScope = newScope } hole
         updScope o = o
-    in traceShowId $ A.mapExpr updScope clause
+    in A.mapExpr updScope clause
 
   -- finds all local variables in a clause
   -- REMARK: currently only works for patterns, not co-patterns
@@ -250,13 +250,6 @@ performUserAction hole action = do
       -- ctx seems only to be relevant when splitting in extended lambdas, not something we do
       replaceClauses hole newClauses <$> gets exerciseDecls
   -- type check
-  -- resetTCState
-  -- concr <- tcmToEx $ abstractToConcrete_ newprog
-  -- liftIO $ putStrLn "check"
-  -- resetTCState
-  -- liftIO $ print concr
-  -- newprogFoo <- tcmToEx $ toAbstract concr
-  -- liftIO $ print newprogFoo
   resetTCState
   -- rebuild interaction points (normally only created when going from concrete -> abstract)
   newprog' <- rebuildInteractionPoints newprog
@@ -281,31 +274,31 @@ undo = do
 -- This step is necessary after resetting the type checker state.
 rebuildInteractionPoints :: A.ExprLike e => e -> ExerciseM e
 rebuildInteractionPoints = tcmToEx . A.traverseExpr go where
-  go (A.QuestionMark m ii) = do
-    liftIO $ do
-      printf "Scope at %s\n" (show ii)
-      print (metaScope m)
-    A.QuestionMark m <$> registerInteractionPoint noRange Nothing
+  go (A.QuestionMark m _) = A.QuestionMark m <$> registerInteractionPoint noRange Nothing
   go other = return other
-
 
 -- | Reverts to a fresh Agda TCM state, forgetting all user definitions and retaining only the primitives
 resetTCState :: ExerciseM ()
-resetTCState = do
-  -- asks exerciseVerbosity >>= void . tcmToEx . initAgda
-  asks exerciseInitialAgdaState >>= restoreTCState
+resetTCState = asks exerciseInitialAgdaState >>= restoreTCState
 
+-- | Lift a TCM computation in the exercise monad.
+-- Can't use 'MonadTCM' because that requires reader and state over
+-- the TCM env and state and not our state.
 tcmToEx :: TCM a -> ExerciseM a
 tcmToEx = lift . lift
 
+-- | Try a computation, executing either the success handler with the result
+-- or the error handler with the caught exception.
 tryIt :: MonadError e m => m a -> (a -> m b) -> (e -> m b) -> m b
 tryIt act success failure = do
   r <- fmap Right act `catchError` \e -> return $ Left e
   either failure success r
 
+-- | Returns the current TCM state.
 saveTCState :: ExerciseM TCState
 saveTCState = tcmToEx get
 
+-- | Restores the TCM state.
 restoreTCState :: TCState -> ExerciseM ()
 restoreTCState = tcmToEx . put
 
@@ -358,7 +351,7 @@ initAgda verbosity = do
   libdir <- liftIO defaultLibDir
   -- To allow posulating the built-ins, check the primitive module
   -- in unsafe mode
-  iface <- bracket_ (gets Lens.getSafeMode) Lens.putSafeMode $ do
+  _ <- bracket_ (gets Lens.getSafeMode) Lens.putSafeMode $ do
     Lens.putSafeMode False
     -- Turn off import-chasing messages.
     -- We have to modify the persistent verbosity setting, since
