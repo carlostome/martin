@@ -300,3 +300,7 @@ itWorks = dfs $ cutoff 10 $ solve testGoal2 testRules2
 ppProof :: Proof -> String
 ppProof (Proof r [] g)   = "(" ++ r ++ " : " ++ show g ++ ")"
 ppProof (Proof r args g) = "(" ++ unwords (r : map ppProof args) ++ " : " ++ show g ++ ")"
+
+proofToStr :: Proof -> String
+proofToStr (Proof r [] _ )  = r
+proofToStr (Proof r args g) = "(" ++ unwords (r : map proofToStr args) ++ ")"

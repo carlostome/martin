@@ -58,8 +58,9 @@ import Debug.Trace
 import Data.Generics.Geniplate
 import Strategy
 import SearchTree
-import Data.List (partition)
+import Data.List ((\\))
 import Data.Monoid
+import Data.Maybe (catMaybes, listToMaybe)
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
@@ -131,60 +132,85 @@ runInteractiveSession verbosity agdaFile = do
     Right _ -> return ()
 
 
--- thereIsMeta :: Declaration -> Bool
--- thereIsMeta = any . foldExpr f False
---   where f (QuestionMark _ _) = True
---         f _ = False
-
-type StrategyM a = ReaderT () TCM a
-
--- | Generate a Strategy for a declaration that has metas.
--- We know that if the right hand side is not a meta then 
--- we can just try to fill the holes using proof search.
--- Otherwise if the right hand side is a meta first we try 
--- proof search, otherwise we split.
-genStrategy :: TCState
-            -> [A.Declaration]
-            -> (I.MetaInfo, InteractionId)
-            -> TCM ClauseStrategy
-genStrategy tcs prog (mi,ii) =
+-- | Apply a proof search strategy,
+-- if not possible select a variable and split.
+proofSearchStrategy :: TCState
+                    -> [A.Declaration]
+                    -> (I.MetaInfo, InteractionId)
+                    -> TCM ClauseStrategy
+proofSearchStrategy tcs prog hole@(mi,ii) = do
   -- First we check whether the meta is in a top level rhs.
+  let prfs = dfs $ cutoff 10 $ solve undefined undefined
   if checkTopLevel (mi,ii) prog
      then do
-       --- HERE
-       let prfs = dfs $ cutoff 10 $ solve undefined undefined
-       case [] of
-        -- if we cannot find a solution we should split and then look for a
-        -- strategy in each of the clauses.
-        -- We should really try out every solution to see which of the fit.
-         [] -> do
-           let var = "n"
-           (_, newClauses) <- MC.makeCase ii noRange var
-           let newProg  = replaceClauses ii newClauses prog
-           put tcs
-           (newP, m) <- rebuildInteractionPoints' newProg
-           checkDecls newP
-           unfreezeMetas
-           -- allMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap (A.foldExpr f) newClauses]
-           -- newMetas = allMetas // (map fs
+       let var = selectVarToSplit prog hole
+       if List.null prfs
+          then splitWithVarAtIdStrategy tcs var prog hole
+          else do
+            solution <- (listToMaybe . catMaybes)
+                        <$> mapM (trySolution tcs prog hole) prfs
+            maybe (splitWithVarAtIdStrategy tcs var prog hole)
+                  (return . RefineStrategy)
+                  solution
+     else do
+       if List.null prfs
+          then return FailStrategy
+          else do
+            solution <- (listToMaybe . catMaybes)
+                        <$> mapM (trySolution tcs prog hole) prfs
+            maybe (return FailStrategy)
+                  (return . RefineStrategy)
+                  solution
 
-           liftIO (print newClauses)
-           SplitStrategy var <$> mapM (genStrategy tcs newProg) undefined
-         prfs -> undefined
-     else
-       undefined
-  where
-    f e@(A.QuestionMark _ _) = [e]
-    f _                      = []
+-- | Select a variable in the scope of an Interation id
+-- to split.
+selectVarToSplit :: [A.Declaration]
+                 -> (I.MetaInfo, InteractionId)
+                 -> String
+selectVarToSplit prog hole@(mi,ii)=
+  let (x:xs) = map snd $ scopeLocals $ metaScope mi
+  in show (localVar x)
+
+
+trySolution :: TCState -> [A.Declaration]
+            -> (I.MetaInfo, InteractionId)
+            -> Proof -> TCM (Maybe Proof)
+trySolution tcs prog hole@(mi,ii) proof =
+  (do given <- B.parseExprIn ii noRange (proofToStr proof)
+      expr  <- B.give ii Nothing given
+      let newProg = replaceHole ii expr prog
+      put tcs
+      checkDecls newProg
+      unfreezeMetas
+      return (Just proof))
+  `catchError` (const (return Nothing))
+
+
+-- | Split a given variable in an InteractionId
+splitWithVarAtIdStrategy :: TCState -> String
+                         -> [A.Declaration]
+                         -> (I.MetaInfo, InteractionId)
+                         -> TCM ClauseStrategy
+splitWithVarAtIdStrategy tcs var prog (mi,ii) = do
+  (_, newClauses) <- MC.makeCase ii noRange var
+  let newProg  = replaceClauses ii newClauses prog
+  put tcs
+  (newP, oldMetas) <- rebuildInteractionPoints' newProg
+  checkDecls newP
+  unfreezeMetas
+  let newMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi newP
+                          , not (ii `elem` oldMetas) ]
+  SplitStrategy var <$> mapM (proofSearchStrategy tcs newProg) newMetas
+
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
 rebuildInteractionPoints' :: A.ExprLike e
-                          => e -> TCM (e,[(InteractionId, InteractionId)])
+                          => e -> TCM (e,[InteractionId])
 rebuildInteractionPoints' e = runWriterT (A.traverseExpr go e) where
   go (A.QuestionMark m ii) = do
     nii <- lift $ registerInteractionPoint noRange Nothing
-    tell [(nii,ii)]
+    when (ii /= (-1)) $ tell [nii]
     return (A.QuestionMark m nii)
   go other = return other
 
@@ -207,33 +233,12 @@ checkTopLevel (mi, ii) = or . map look
     isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
     isTopLevelHole _ = False
 
-lookForClause :: (I.MetaInfo, InteractionId) -> [A.Declaration] -> A.Clause
-lookForClause (mi, ii) prog = undefined
-  -- where
-  --   look (A.Mutual _ decls)      = or $ map look decls
-  --   look (A.Section _ _ _ decls) = or $ map look decls
-  --   look (A.RecDef _ _ _ _ _ _ _ decls) = or $ map look decls
-  --   look (A.ScopedDecl _ decls)         = or $ map look decls
-  --   look (A.FunDef _ _ _ clauses) = or $ map lookClause clauses
-  --   look _ = False
-
-  --   lookClause cls = case A.clauseRHS cls of
-  --     A.RHS e -> isTopLevelHole e
-  --     _ -> False
-
-  --   isTopLevelHole (A.QuestionMark mi hole) = ii == hole
-  --   isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
-  --   isTopLevelHole _ = False
-
-cycles :: [a] -> [[a]]
-cycles xs = take (length xs) $ iterate (\(x:xs) -> xs ++ [x]) xs
-
 -- | Generate a Strategy given a list of Declaration.
--- Only one Declaration contains holes.
+-- This is the top level function.
 generateStrategy :: TCState -> [A.Declaration] -> TCM [ClauseStrategy]
 generateStrategy tcs prog = do
   let metas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi prog]
-  mapM (genStrategy tcs prog) metas
+  mapM (proofSearchStrategy tcs prog) metas
 
 -- | This is where all the exercise solving should happen
 exerciseSession :: ExerciseM ()
