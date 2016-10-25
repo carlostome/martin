@@ -112,6 +112,7 @@ runInteractiveSession verbosity agdaFile = do
     unfreezeMetas -- IMPORTANT: if metas are not unfrozen, we cannot refine etc.
 
     str <- generateStrategy initialState abstractDecls
+    liftIO (print str)
 
     -- setup initial state and the environment
     let exState = ExerciseState
@@ -142,13 +143,21 @@ proofSearchStrategy :: TCState
 proofSearchStrategy tcs prog hole@(mi,ii) = do
   -- First we check whether the meta is in a top level rhs.
   (goal, hdb) <- goalAndRules prog ii
+  liftIO (print goal >> print hdb)
   let prfs = dfs $ cutoff 10 $ solve goal hdb
+  -- (B.OfType _ t) <- B.typeOfMeta B.Normalised ii
+  -- let goal = typeToGoal t
+  -- scopeTExprs <- thingsInScopeWithType ii
+  -- let hdb  = exHDB -- map exprToRule scopeTExprs
+  -- let prfs = dfs $ cutoff 10 $ solve goal hdb
+
   if checkTopLevel (mi,ii) prog
      then do
        let var = selectVarToSplit prog hole
        if List.null prfs
           then splitWithVarAtIdStrategy tcs var prog hole
           else do
+            liftIO (print "DP 3")
             solution <- (listToMaybe . catMaybes)
                         <$> mapM (trySolution tcs prog hole) prfs
             maybe (splitWithVarAtIdStrategy tcs var prog hole)
@@ -174,16 +183,20 @@ selectVarToSplit prog hole@(mi,ii)=
   in show (localVar x)
 
 
+-- | Try a Proof to see if it typechecks/passes termination checker.
 trySolution :: TCState -> [A.Declaration]
             -> (I.MetaInfo, InteractionId)
             -> Proof -> TCM (Maybe Proof)
 trySolution tcs prog hole@(mi,ii) proof =
-  (do given <- B.parseExprIn ii noRange (proofToStr proof)
-      expr  <- B.give ii Nothing given
+  (do aexpr <- proofToAbstractExpr ii proof
+      expr  <- B.give ii Nothing aexpr
       let newProg = replaceHole ii expr prog
       put tcs
+      liftIO (print "DP 4")
       checkDecls newProg
+      liftIO (print "DP 5")
       unfreezeMetas
+      liftIO (print "DP 6")
       return (Just proof))
   `catchError` (const (return Nothing))
 
