@@ -49,6 +49,7 @@ import           Control.Monad.State.Strict
 import Control.Monad.Writer
 import Control.Monad.Reader
 import qualified Data.List                                  as List
+import qualified Data.Set                                  as Set
 import           System.FilePath                            ((</>))
 import Text.Printf
 
@@ -274,6 +275,7 @@ exerciseSession = do
         ('r':' ':ref) -> wrapAction $ performUserAction ii (UserRefine ref)
         ('c':' ':var) -> wrapAction $ performUserAction ii (UserSplit var)
         "u" -> undo >>= liftIO . print
+        "s" -> tcmToEx $ thingsInScopeWithType  ii >>= liftIO . print
         _ -> liftIO $ putStrLn "try again"
 
 -- | Replaces the clause identified by the interaction id of its single RHS hole
@@ -492,7 +494,21 @@ proofToAbstractExpr ii proof = B.parseExprIn ii noRange (proofStr proof) where
     | List.null args = name
     | otherwise = "(" ++ List.unwords (name : map proofStr args) ++ ")"
 
-
+-- | Returns everything that is in scope at a given interaction point.
+-- The first A.Expr is either a Var referring to a local bound variable
+-- or a Def referring to a global definition.
+-- The second A.Expr is the type of that thing.
+thingsInScopeWithType :: InteractionId -> TCM [(A.Expr, A.Expr)]
+thingsInScopeWithType ii = do
+  m <- lookupInteractionId ii
+  mi <- lookupMeta m
+  let s = getMetaScope mi
+      locals = map (localVar . snd) $ scopeLocals s
+      globals = Set.toList $ scopeInScope s
+      allExprs = map A.Var locals ++ map A.Def globals
+  types <- mapM (B.typeInMeta ii B.Normalised) allExprs
+  let stuffWithTypes = zip allExprs types
+  return stuffWithTypes
 
 -- * Some functions solely used for testing stuff
 
