@@ -39,6 +39,7 @@ import           Agda.Utils.Time
 import qualified Agda.Utils.Trie                            as Trie
 
 import           ProofSearch
+import           Translation
 
 import qualified MakeCaseModified as MC
 
@@ -140,7 +141,8 @@ proofSearchStrategy :: TCState
                     -> TCM ClauseStrategy
 proofSearchStrategy tcs prog hole@(mi,ii) = do
   -- First we check whether the meta is in a top level rhs.
-  let prfs = dfs $ cutoff 10 $ solve undefined undefined
+  (goal, hdb) <- goalAndRules prog ii
+  let prfs = dfs $ cutoff 10 $ solve goal hdb
   if checkTopLevel (mi,ii) prog
      then do
        let var = selectVarToSplit prog hole

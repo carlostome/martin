@@ -20,6 +20,7 @@ import Agda.Utils.FileName
 import Control.Monad.IO.Class
 import Control.Monad.State.Strict
 import Control.DeepSeq
+import Data.Maybe
 
 import Agda.Syntax.Abstract.Pretty
 
@@ -63,20 +64,8 @@ test concrt = do
     abstr <- toAbstract concrt
     checkDecls abstr
     --liftIO $ putStrLn "abstr"
-    --liftIO $ putStrLn $ show abstr
-    proof <- getGoal abstr 1
-    (hdb,_) <- runStateT (makeRules abstr) []
-    --let (hdb,_) = runStateT (makeRules abstr) []
-    liftIO $ putStrLn $ printRules hdb
-    e <- proofToAbstract (head proof) hdb 0
-    liftIO $ putStrLn $ show e
-    --liftIO $ putStrLn $ show proof
-    --liftIO $ putStrLn $ show e
-    --liftIO $ putStrLn pretty
-    --conctr' <- runAbsToCon $ toConcrete abstr
-    --liftIO $ putStrLn $ dprint $ head conctr'
-    --check <- checkDecls abstr    
-    --liftIO $ putStrLn $ show check
+    g <- getGoal abstr 0
+    liftIO $ putStrLn $ show g
     return ()
 
 getGoal abstr n = do
@@ -84,18 +73,19 @@ getGoal abstr n = do
     return mps
 
 pipeline abstr n = do
-    hdb <- makeRules abstr
-    g <- generateGoal n abstr
+    hdb <- makeRules abstr n
+    liftIO $ putStrLn $ printRules hdb
+    g <- generateGoal abstr n
+    hdb' <- get
+    liftIO $ putStrLn $ printRules hdb'
     
-    if null g
+    if isNothing g
         then return []
         else do
-            liftIO $ putStrLn $ "goal: " ++ show (head g)
-            return $ dfs $ cutoff 2 $ solve (head g) hdb
+            liftIO $ putStrLn $ show (fromJust g)
+            return $ dfs $ cutoff 2 $ solve (fromJust g) hdb'
 
 
 printRules :: HintDB -> String
 printRules [] = ""
 printRules (x:xs) = show x ++ "\n" ++ printRules xs
-
-
