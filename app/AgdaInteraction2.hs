@@ -5,6 +5,7 @@ import qualified Agda.Interaction.BasicOps                  as B
 import           Agda.Interaction.FindFile
 import           Agda.Interaction.Imports
 import           Agda.Interaction.InteractionTop
+import           Agda.Interaction.MakeCase
 import           Agda.Interaction.Options
 import qualified Agda.Interaction.Options.Lenses            as Lens
 import           Agda.Main
@@ -36,6 +37,8 @@ import qualified Agda.Utils.Trie                            as Trie
 
 import           ProofSearch
 
+import qualified MakeCaseModified as MC
+
 import           Control.DeepSeq
 import           Control.Monad.Except
 import           Control.Monad.IO.Class
@@ -52,6 +55,9 @@ import Text.Printf
 -- the declarations.
 data ExerciseState = ExerciseState
   { exerciseDecls :: [A.Declaration]
+  -- ^ the current state of the program
+  , exerciseUndo :: [([A.Declaration], TCState)]
+  -- ^ a history of program states
   }
 
 -- | Environment for exercise computation.
@@ -90,7 +96,8 @@ runInteractiveSession verbosity agdaFile = do
     
     -- setup initial state and the environment
     let exState = ExerciseState
-          { exerciseDecls = abstractDecls }
+          { exerciseDecls = abstractDecls
+          , exerciseUndo = [] }
         exEnv = ExerciseEnv
           { exerciseFile = absPath
           , exerciseVerbosity = verbosity
@@ -121,58 +128,129 @@ exerciseSession = do
   forever $ do
     showProgramToUser
     liftIO $ putStrLn "InteractionID:"
-    ii <- InteractionId <$> liftIO readLn
-    liftIO $ putStrLn "Action:"
-    act <- liftIO $ getLine
-    case act of
-      ('r':' ':ref) -> do
-        -- parse the user input in the given context
-        given <- tcmToEx $ B.parseExprIn ii noRange ref
-        liftIO $ print given
-        -- try to refine the hole with the user expression
-        expr <- tcmToEx $ fmap Just (B.refine ii Nothing given) `catchError` \err -> do
-          str <- prettyError err
-          liftIO $ putStrLn str
-          return Nothing
-        liftIO $ printf "done refining\n"
-        -- if successful, actually replace that part of the AST
-        case expr of
-          Just repl -> do
-            -- replace hole in AST
-            curprog <- gets exerciseDecls
-            let newprog = flip A.mapExpr curprog $ \e -> case e of
-                  A.QuestionMark _ iiq
-                    | iiq == ii -> repl
-                  other -> other
-            -- save current state to be able to recover if it turns out not to type check
-            prev <- saveTCState
-            resetTCState
-            -- rebuild interaction points (normally only created when going from concrete -> abstract)
-            newprog' <- rebuildInteractionPoints newprog
-            -- check updated AST (should actually always succeed)
-            liftIO $ printf "checking AST\n"
-            tryIt (tcmToEx $ checkDecls newprog' >> unfreezeMetas)
+    ii <- InteractionId <$> liftIO readLn `catchError` \_ -> return (-1)
+    when (ii >= 0) $ do
+      liftIO $ putStrLn "Action:"
+      act <- liftIO $ getLine
+      let wrapAction act = do
+            recordState -- save state for undoing
+            tryIt act
               (\_ -> do -- success
-                  liftIO $ printf "success\n"
-                  modify $ \s -> s { exerciseDecls = newprog' }
-                  )
-              (\_ -> do -- failure
-                  liftIO $ printf "failure\n"
-                  restoreTCState prev
+                  liftIO $ printf "recorded step\n"
+                  tcmToEx $ getInteractionIdsAndMetas >>= mapM_
+                    (\(ii, mi) -> do
+                        meta <- getMetaInfo <$> lookupMeta mi
+                        liftIO $ printf "Scope for %s:\n" (show ii)
+                        liftIO $ print (clScope meta)
+                        liftIO $ printf "\n\n")
               )
-          Nothing -> return ()
-      ('c':' ':var) -> do
-        -- TODO split
-        return ()
-      _ -> liftIO $ putStrLn "try again"
+              (\e -> do -- failure
+                  str <- tcmToEx $ prettyError e
+                  liftIO $ printf "step did not type check: %s\n" str
+                  void $ undo
+              )
+      case act of
+        ('r':' ':ref) -> wrapAction $ performUserAction ii (UserRefine ref)
+        ('c':' ':var) -> wrapAction $ performUserAction ii (UserSplit var)
+        "u" -> undo >>= liftIO . print
+        _ -> liftIO $ putStrLn "try again"
+
+-- | Replaces the clause identified by the interaction id of its single RHS hole
+-- with the list of new clauses.
+replaceClauses :: InteractionId -> [A.Clause] -> [A.Declaration] -> [A.Declaration]
+replaceClauses ii newClauses prog = map update prog where
+  update (A.Mutual mi decls) = A.Mutual mi (map update decls)
+  update (A.Section mi mn bnds decls) = A.Section mi mn bnds (map update decls)
+  update (A.FunDef di qn del clauses) = A.FunDef di qn del $ concatMap updateClause clauses
+  update (A.RecDef di qn1 ri flag qn2 bnds e decls) = A.RecDef di qn1 ri flag qn2 bnds e (map update decls)
+  update (A.ScopedDecl si decls) = A.ScopedDecl si (map update decls)
+  update other = other
+
+  updateClause cls = case A.clauseRHS cls of
+    A.RHS e -> case isTopLevelHole e of
+      -- the newly generated meta variables inherit the scope information of the
+      -- variable they are replacing. Since we are operating on abstract syntax,
+      -- which is the stage after scope checking, we need to track scope manually here.
+      Just (mi, hole) | hole == ii -> map (initScope $ metaScope mi) newClauses
+      _ -> [cls]
+    A.WithRHS qn exprs clauses ->
+      let newrhs = A.WithRHS qn exprs (concatMap updateClause clauses)
+      in [cls { A.clauseRHS = newrhs}]
+    other -> [cls]
+
+  isTopLevelHole (A.QuestionMark mi hole) = Just (mi, hole)
+  isTopLevelHole (A.ScopedExpr _ e) = isTopLevelHole e
+  isTopLevelHole other = Nothing
+
+  -- updates the scope of meta variables
+  initScope scope = A.mapExpr $ \e -> case e of
+    A.QuestionMark mi ii -> A.QuestionMark mi { metaScope = scope } ii
+    other -> other
+
+-- | Replaces a hole identified by its interaction id with a new expression.
+replaceHole :: A.ExprLike e => InteractionId -> A.Expr -> e -> e
+replaceHole ii repl = A.mapExpr $ \e -> case e of
+                                  A.QuestionMark _ iiq
+                                    | iiq == ii -> repl
+                                  other -> other
+
+-- | Adds the current program and TCM state to the undo history.
+recordState :: ExerciseM ()
+recordState = do
+  prog <- gets exerciseDecls
+  tc <- saveTCState
+  modify $ \s -> s { exerciseUndo = (prog, tc) : exerciseUndo s }
+
+data UserAction
+  = UserRefine String
+  | UserSplit String
+
+-- | Type checks a new state of the program and update, if successful.
+-- May fail with an exception if any step goes wrong. Restoring state
+-- should be handled by caller.
+performUserAction :: InteractionId -> UserAction -> ExerciseM ()
+performUserAction hole action = do
+  -- apply action to generate new program
+  newprog <- case action of
+    UserRefine estr -> do
+      -- parse the user input in the given context
+      given <- tcmToEx $ B.parseExprIn hole noRange estr
+      -- try to refine the hole with the user expression
+      expr <- tcmToEx $ B.refine hole Nothing given
+      -- replace hole in AST
+      replaceHole hole expr <$> gets exerciseDecls
+    UserSplit var -> do
+      -- invoke case splitting functionality
+      (ctx, newClauses) <- tcmToEx $ MC.makeCase hole noRange var
+      -- ctx seems only to be relevant when splitting in extended lambdas, not something we do
+      replaceClauses hole newClauses <$> gets exerciseDecls
+  -- type check
+  resetTCState
+  -- rebuild interaction points (normally only created when going from concrete -> abstract)
+  newprog' <- rebuildInteractionPoints newprog
+  -- check updated AST (might not succeed if the termination checker intervenes)
+  tcmToEx $ do
+    checkDecls newprog'
+    unfreezeMetas
+  modify $ \s -> s { exerciseDecls = newprog' }
+
+undo :: ExerciseM Bool
+undo = do
+  hist <- gets exerciseUndo
+  case hist of
+    (prog,st):rest -> do
+      restoreTCState st
+      tcmToEx $ getInteractionIdsAndMetas >>= liftIO . print
+      modify $ \s -> s { exerciseUndo = rest, exerciseDecls = prog }
+      return True
+    _ -> return False
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
 rebuildInteractionPoints :: A.ExprLike e => e -> ExerciseM e
-rebuildInteractionPoints = tcmToEx . A.traverseExpr
-              (\e -> case e of
-                       A.QuestionMark m ii -> A.QuestionMark m <$> registerInteractionPoint noRange Nothing
-                       other -> pure other)
+rebuildInteractionPoints = tcmToEx . A.traverseExpr go where
+  go (A.QuestionMark m ii) = A.QuestionMark m <$> registerInteractionPoint noRange Nothing
+  go other = return other
 
 
 -- | Reverts to a fresh Agda TCM state, forgetting all user definitions and retaining only the primitives
@@ -301,3 +379,4 @@ itest2 agdaFile = do
     getInteractionIdsAndMetas >>= liftIO . print -- prints [], so restoring actually works
 
     return ()
+

@@ -11,5 +11,4 @@ data Vec (A : Set) : Nat -> Set where
   cons : forall {n} -> A -> Vec A n -> Vec A (suc n)
 
 map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
-map f nil = {!!}
-map f (cons x xs) = {!!}
+map f xs = {!!}

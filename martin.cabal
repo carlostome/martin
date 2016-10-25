@@ -33,6 +33,7 @@ executable martin-exe
   main-is:             Main.hs
   other-modules:       AgdaInteraction
                        AgdaInteraction2
+                       MakeCaseModified
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , Agda
