@@ -47,7 +47,6 @@ import           Control.DeepSeq
 import           Control.Monad.Except
 import           Control.Monad.IO.Class
 import           Control.Monad.State.Strict
-import Control.Monad.Extra
 import Control.Monad.Writer
 import Control.Monad.Reader
 import qualified Data.List                                  as List
@@ -110,7 +109,6 @@ runInteractiveSession verbosity agdaFile = do
     -- check that the exercise is valid to begin with
     checkDecls abstractDecls
 
-
     unfreezeMetas -- IMPORTANT: if metas are not unfrozen, we cannot refine etc.
 
     -- -- setup initial state and the environment
@@ -131,7 +129,7 @@ runInteractiveSession verbosity agdaFile = do
     return abstractDecls
   case ret of
     Left err -> printf "Exercise session failed with\n%s\n" err
-    Right decl -> do session <- S.initSession verbosity
+    Right decl -> do session <- S.initSession verbosity absPath
                      str <- S.buildStrategy session decl
                      print str
 

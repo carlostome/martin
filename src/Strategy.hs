@@ -1,61 +1,45 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeSynonymInstances  #-}
 module Strategy where
 
-import ProofSearch
-import Data.List
-import qualified Agda.Interaction.BasicOps                  as B
+import qualified Agda.Interaction.BasicOps       as B
 import           Agda.Interaction.FindFile
 import           Agda.Interaction.Imports
-import           Agda.Interaction.InteractionTop
-import           Agda.Interaction.MakeCase
 import           Agda.Interaction.Options
-import qualified Agda.Interaction.Options.Lenses            as Lens
-import           Agda.Main
-import qualified Agda.Syntax.Abstract                       as A
-import qualified Agda.Syntax.Abstract.Views                 as A
-import           Agda.Syntax.Abstract.Pretty
+import qualified Agda.Interaction.Options.Lenses as Lens
+import qualified Agda.Syntax.Abstract            as A
+import qualified Agda.Syntax.Abstract.Views      as A
 import           Agda.Syntax.Common
-import           Agda.Syntax.Info as I
+import           Agda.Syntax.Info                as I
 import           Agda.Syntax.Position
 import           Agda.Syntax.Scope.Base
-import qualified           Agda.Syntax.Internal.Names as I
-import           Agda.Syntax.Translation.ConcreteToAbstract
 import           Agda.TheTypeChecker
 import           Agda.TypeChecking.Monad
-import           Agda.TypeChecking.Errors
 import           Agda.Utils.FileName
-import           Agda.Utils.FileName
-import           Agda.Utils.Hash
-import           Agda.Utils.IO.Binary
-import           Agda.Utils.Lens
-import           Agda.Utils.Monad hiding (ifM)
-import           Agda.Utils.Null
-import           Agda.Utils.Pretty
-import           Agda.Utils.Time
-import qualified Agda.Utils.Trie                            as Trie
-import Control.Monad.Trans.Maybe
-import Control.Monad
-import Control.Applicative
-import qualified MakeCaseModified as MC
-import           Control.DeepSeq
-import           Control.Monad.Except
-import           Control.Monad.IO.Class
-import           Control.Monad.State.Strict
-import Control.Monad.Extra
-import Control.Monad.Writer
-import Control.Monad.Reader
-import qualified Data.List                                  as List
-import qualified Data.Set                                  as Set
-import           System.FilePath                            ((</>))
-import Text.Printf
-import Debug.Trace
-import Data.Generics.Geniplate
-import SearchTree
-import Data.List ((\\))
-import Data.Monoid
-import Data.Maybe (catMaybes, listToMaybe)
+import           Agda.Utils.Monad                hiding (ifM)
+import qualified Agda.Utils.Trie                 as Trie
 
-import           ProofSearch
+import           Control.Arrow                   ((&&&))
+import qualified Control.Exception               as E
+import           Control.Lens
+import           Control.Monad
+import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Control.Monad.State.Strict
+import           Control.Monad.Trans.Maybe
+import           Control.Monad.Writer
+import           Data.Generics.Geniplate
+import qualified Data.List                       as List
+import           Debug.Trace
+import           System.FilePath                 ((</>))
+
+import qualified MakeCaseModified                as MC
+import qualified ProofSearch                     as P
+import           SearchTree
 import           Translation
 
 -- | A strategy describing how to solve a clause towards an auto-generated model solution
@@ -64,9 +48,9 @@ data ClauseStrategy
   -- ^ @Split v next@ splits on variable @v@ in the current holes, and applies the strategies
   -- in @next@ to the corresponding new clause. An empty list of subordinate clauses indicates
   -- that the split introduced an absurd-pattern.
-  | RefineStrategy Proof
+  | RefineStrategy P.Proof
   -- ^ refines the current hole with a proof found by the proof search
-  | FailStrategy
+  -- | FailStrategy
   deriving (Read, Eq, Ord)
 
 -- | A strategy for solving an exercise consists of one strategy for each clause of the exercise
@@ -77,31 +61,43 @@ instance Show ClauseStrategy where
     (("split at " ++ s ++ " and:") :
      map (("  "++) . show) cl)
   show (RefineStrategy pr) =
-    ("refine with: " ++ proofToStr pr)
-  show FailStrategy = "fail"
+    "refine with: " ++ P.proofToStr pr
+
+-- | Pairs an abstract Agda program with the type checker state after checking said program.
+data StatefulProgram = StatefulProgram
+  { _programDecls   :: [A.Declaration]
+  , _programTCState :: TCState
+  -- ^ the state of the type checker after checking the program.
+  -- In particular, all interaction points are registered and paired with the corresponding meta variables.
+  }
+makeLenses ''StatefulProgram
+
+data SearchEnvironment = SearchEnvironment
+  { _initialTCState :: TCState
+  -- ^ the initial state just after loading the Agda primitives.
+  -- No user bindings have been checked yet.
+  , _initialTCEnv   :: TCEnv
+  }
+makeLenses ''SearchEnvironment
+
+type Search = MaybeT (ReaderT SearchEnvironment IO)
 
 debug :: (MonadIO m, Show a) => a -> m ()
 debug str = when True (liftIO (print str))
 
 -- | Apply a proof search strategy,
 -- if not possible select a variable and split.
-proofSearchStrategy :: TCEnv
-                    -> TCState
-                    -> [A.Declaration]
-                    -> (I.MetaInfo, InteractionId)
-                    -> IO ClauseStrategy
-proofSearchStrategy tce tcs prog hole@(mi,ii) = do
+proofSearchStrategy :: StatefulProgram
+                    -> InteractionId
+                    -> Search ClauseStrategy
+proofSearchStrategy prog ii = do
   debug ("proofSearchStrategy " ++ show ii)
   -- First we check whether the meta is in a top level rhs.
-  ((goal, hdb),_) <- runTCM tce tcs $ goalAndRules ii
-  let prfs = iddfs $ cutoff 5 $ solve goal hdb
-  solution <- runMaybeT . msum . map (trySolution tce tcs prog hole) $ prfs
-  case solution of
-    Just proof -> return (RefineStrategy proof)
-    Nothing
-      | checkTopLevel (mi,ii) prog ->
-         splitVarStrategy tce tcs prog hole
-      | otherwise -> return FailStrategy
+  ((goal, hdb),_) <- runTCMSearch (view programTCState prog) $ goalAndRules ii
+  let prfs = iddfs $ cutoff 10 $ P.solve goal hdb
+  mplus (RefineStrategy <$> msum (map (trySolution prog ii) prfs))
+        (do guard (checkTopLevel ii (view programDecls prog))
+            splitStrategy prog ii)
 
 -- | Select a variable in the scope of an Interation id
 -- to split.
@@ -117,21 +113,23 @@ selectVarToSplit prog hole@(mi,ii)=
 -- A known problem with this function is if the we feed the hole
 -- with a non structurally smaller expression then it just loops.
 -- This bug also happens in Agda #2286
-trySolution :: TCEnv -> TCState -> [A.Declaration]
-            -> (I.MetaInfo, InteractionId)
-            -> Proof -> MaybeT IO Proof
-trySolution tce tcmState prog hole@(mi,ii) proof = mapMaybeT (fmap fst . runTCM tce tcmState) $ do
-  debug ("trying solution: " ++ proofToStr proof)
+trySolution :: StatefulProgram
+            -> InteractionId
+            -> P.Proof -> Search P.Proof
+trySolution prog ii proof = do
+  debug ("trying solution: " ++ P.proofToStr proof)
   -- Save the old TCM state because proofToAbstractExpr may change it.
-  expr <- lift $ B.parseExprIn ii noRange (proofToStr proof)
+  (expr, tcs') <- runTCMSearch (view programTCState prog) $ B.parseExprIn ii noRange (P.proofToStr proof)
   -- Replace the hole in the old program with the new expression.
-  let newProg = replaceHole ii expr prog
+  let newProg = views programDecls (replaceHole ii expr) prog
   -- Try to typecheck the new program.
-  put tcmState
-  tryIt (lift $ checkDecls newProg)
-        (const (return proof))
-        (const mzero)
-
+  fmap fst . runTCMSearchFresh $ do
+    (ds, _) <- rebuildInteractionPoints newProg
+    debug "checking filled hole inside TCM"
+    checkDecls ds
+    debug "checked filled hole inside TCM"
+    unfreezeMetas
+    return proof
 
 -- | Replaces a hole identified by its interaction id with a new expression.
 replaceHole :: A.ExprLike e => InteractionId -> A.Expr -> e -> e
@@ -141,24 +139,41 @@ replaceHole ii repl = A.mapExpr $ \e -> case e of
                                   other -> other
 
 -- | Split a given variable in an InteractionId
-splitVarStrategy :: TCEnv -> TCState
-                         -> [A.Declaration]
-                         -> (I.MetaInfo, InteractionId)
-                         -> IO ClauseStrategy
-splitVarStrategy tce tcs prog hole@(mi,ii) = do
-  let var = selectVarToSplit prog hole
-  debug ("splitting on var: " ++ var)
-  ((_, newClauses),tcs') <- runTCM tce tcs (MC.makeCase ii noRange var)
-  let newProg  = replaceClauses ii newClauses prog
-  ((newP, oldMetas),tcs'') <- runTCM tce tcs' $ do
-     (newDecl,oldMetas) <- rebuildInteractionPoints newProg
-     checkDecls newDecl
-     unfreezeMetas
-     return (newDecl,oldMetas)
-  let newMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi newP
-                          , not (ii `elem` oldMetas) ]
-  SplitStrategy var <$> mapM (proofSearchStrategy tce tcs'' newP) newMetas
+splitStrategy :: StatefulProgram
+              -> InteractionId
+              -> Search ClauseStrategy
+splitStrategy prog ii = do
+  let vars = ["xs"]
+  msum $ map (splitSingleVarStrategy prog ii) vars
 
+splitSingleVarStrategy :: StatefulProgram -> InteractionId -> String -> Search ClauseStrategy
+splitSingleVarStrategy prog ii var = do
+  debug ("splitting on var: " ++ var)
+  ((_, newClauses),_) <- runTCMSearch (view programTCState prog) $ MC.makeCase ii noRange var
+  debug ("new clauses: " ++ show newClauses)
+  ((newDecls, oldMetas),tcs) <- runTCMSearchFresh $ do
+     (interactionDecls, oldMetas) <- rebuildInteractionPoints (views programDecls (replaceClauses ii newClauses) prog)
+     checkDecls interactionDecls
+     unfreezeMetas
+     return (interactionDecls,oldMetas)
+  let newProg = StatefulProgram
+        { _programDecls = newDecls
+        , _programTCState = tcs
+        }
+  let newMetas = [ newii | A.QuestionMark _ newii <- concatMap universeBi newDecls
+                         , newii `notElem` oldMetas ]
+  SplitStrategy var <$> mapM (proofSearchStrategy newProg) newMetas
+
+runTCMSearch :: TCState -> TCM a -> Search (a, TCState)
+runTCMSearch tcs tcm = do
+  tce <- view initialTCEnv
+  r <- liftIO $ (Right <$> runTCM tce tcs tcm) `E.catch` (\(e :: TCErr) -> return $ Left e)
+  case r of
+    Left _ -> mzero
+    Right v  -> return v
+
+runTCMSearchFresh :: TCM a -> Search (a, TCState)
+runTCMSearchFresh tcm = view initialTCState >>= flip runTCMSearch tcm
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
@@ -172,37 +187,37 @@ rebuildInteractionPoints e = runWriterT (A.traverseExpr go e) where
   go other = return other
 
 -- | Check if the Hole is in a top level position.
-checkTopLevel :: (I.MetaInfo, InteractionId) -> [A.Declaration] -> Bool
-checkTopLevel (mi, ii) = or . map look
+checkTopLevel :: InteractionId -> [A.Declaration] -> Bool
+checkTopLevel ii = any look
   where
-    look (A.Mutual _ decls)      = or $ map look decls
-    look (A.Section _ _ _ decls) = or $ map look decls
-    look (A.RecDef _ _ _ _ _ _ _ decls) = or $ map look decls
-    look (A.ScopedDecl _ decls)         = or $ map look decls
-    look (A.FunDef _ _ _ clauses) = or $ map lookClause clauses
-    look _ = False
+    look (A.Mutual _ decls)             = any look decls
+    look (A.Section _ _ _ decls)        = any look decls
+    look (A.RecDef _ _ _ _ _ _ _ decls) = any look decls
+    look (A.ScopedDecl _ decls)         = any look decls
+    look (A.FunDef _ _ _ clauses)       = any lookClause clauses
+    look _                              = False
 
     lookClause cls = case A.clauseRHS cls of
       A.RHS e -> isTopLevelHole e
-      _ -> False
+      _       -> False
 
-    isTopLevelHole (A.QuestionMark mi hole) = ii == hole
-    isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
-    isTopLevelHole _ = False
+    isTopLevelHole (A.QuestionMark _ hole) = ii == hole
+    isTopLevelHole (A.ScopedExpr _ e)      = isTopLevelHole e
+    isTopLevelHole _                       = False
 
 -- | Generate a Strategy given a list of Declaration.
 -- This is the top level function.
-generateStrategy :: TCState -> [A.Declaration] -> IO [ClauseStrategy]
-generateStrategy tcs prog = do
-  (newDecls, tcs') <- runTCM initEnv tcs $ do
+generateStrategy :: [A.Declaration] -> Search [ClauseStrategy]
+generateStrategy prog = do
+  (newDecls, tcs') <- runTCMSearchFresh $ do
     (newDecl,_) <- rebuildInteractionPoints prog
     checkDecls newDecl
     unfreezeMetas
     return newDecl
-  let metas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi newDecls]
-  debug ("Generate strategy for metas: "
-         ++ intercalate "," (map (show . snd) metas))
-  mapM (proofSearchStrategy initEnv tcs' newDecls) metas
+  let metas = [ ii | A.QuestionMark mi ii <- concatMap universeBi newDecls]
+      sprog = StatefulProgram newDecls tcs'
+  debug ("Generate strategy for metas: " ++ show metas)
+  mapM (proofSearchStrategy sprog) metas
 
 -- | This initializes the TCM state just enough to get everything started.
 -- For now, it uses the default options and loads Agda's Level primitives.
@@ -236,14 +251,18 @@ initAgda verbosity = do
   get
 
 data Session = Session
-  { buildStrategy :: [A.Declaration] -> IO [ClauseStrategy] }
+  { buildStrategy :: [A.Declaration] -> IO (Maybe [ClauseStrategy]) }
 
-initSession :: Int -> IO Session
-initSession verbosity = do
+initSession :: Int -> AbsolutePath -> IO Session
+initSession verbosity path = do
   debug "Initializing session"
   (tcmState,_) <- runTCM initEnv initState $ initAgda verbosity
-  return $ Session
-     { buildStrategy = \decls -> generateStrategy tcmState decls }
+  let env = SearchEnvironment
+        { _initialTCState = tcmState
+        , _initialTCEnv = initEnv { envCurrentPath = Just path }
+        }
+  return Session
+     { buildStrategy = \decls -> runReaderT (runMaybeT (generateStrategy decls)) env }
 
 -- | Try a computation, executing either the success handler with the result
 -- or the error handler with the caught exception.
@@ -252,10 +271,15 @@ tryIt act success failure = do
   r <- fmap Right act `catchError` \e -> return $ Left e
   either failure success r
 
+tryItIO :: IO a -> (a -> IO b) -> (E.SomeException -> IO b) -> IO b
+tryItIO act success failure = do
+  r <- fmap Right act `E.catch` \e -> return $ Left e
+  either failure success r
+
 -- | Replaces the clause identified by the interaction id of its single RHS hole
 -- with the list of new clauses.
 replaceClauses :: InteractionId -> [A.Clause] -> [A.Declaration] -> [A.Declaration]
-replaceClauses ii newClauses prog = map update prog where
+replaceClauses ii newClauses = map update where
   -- recursively traverses all declarations to replace the clauses
   update (A.Mutual mi decls) = A.Mutual mi (map update decls)
   update (A.Section mi mn bnds decls) = A.Section mi mn bnds (map update decls)
@@ -279,13 +303,13 @@ replaceClauses ii newClauses prog = map update prog where
 
   -- checks whether there is a top level hole in the expression of a clause
   isTopLevelHole (A.QuestionMark mi hole) = Just (mi, hole)
-  isTopLevelHole (A.ScopedExpr _ e) = isTopLevelHole e
-  isTopLevelHole _ = Nothing
+  isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
+  isTopLevelHole _                        = Nothing
 
   initScope scope clause =
     -- here we need to extract all the bound names in the patterns of the clause and insert
     -- them into the top level scope
-    let locals = map (\n -> (A.nameConcrete n, LocalVar n)) $ clauseLocals $ A.clauseLHS clause
+    let locals = map (A.nameConcrete &&& LocalVar) $ clauseLocals $ A.clauseLHS clause
         newScope = scope { scopeLocals = locals }
         -- update scoped things in the expression with the new scope
         updScope (A.ScopedExpr _ e) = A.ScopedExpr newScope e
