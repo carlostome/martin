@@ -146,7 +146,7 @@ proofSearchStrategy :: TCState
                     -> TCM ClauseStrategy
 proofSearchStrategy tcs prog hole@(mi,ii) = do
   -- First we check whether the meta is in a top level rhs.
-  (goal, hdb) <- goalAndRules prog ii
+  (goal, hdb) <- goalAndRules ii
   let prfs = dfs $ cutoff 6 $ solve goal hdb
   liftIO (print $ map proofToStr prfs)
   debug (show ii)
@@ -526,22 +526,6 @@ proofToAbstractExpr ii proof = B.parseExprIn ii noRange (proofStr proof) where
   proofStr (Proof name args _)
     | List.null args = name
     | otherwise = "(" ++ List.unwords (name : map proofStr args) ++ ")"
-
--- | Returns everything that is in scope at a given interaction point.
--- The first A.Expr is either a Var referring to a local bound variable
--- or a Def referring to a global definition.
--- The second A.Expr is the type of that thing.
-thingsInScopeWithType :: InteractionId -> TCM [(A.Expr, A.Expr)]
-thingsInScopeWithType ii = do
-  m <- lookupInteractionId ii
-  mi <- lookupMeta m
-  let s = getMetaScope mi
-      locals = map (localVar . snd) $ scopeLocals s
-      globals = Set.toList $ scopeInScope s
-      allExprs = map A.Var locals ++ map A.Def globals
-  types <- mapM (B.typeInMeta ii B.Normalised) allExprs
-  let stuffWithTypes = zip allExprs types
-  return stuffWithTypes
 
 -- * Some functions solely used for testing stuff
 

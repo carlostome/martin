@@ -2,9 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Lib
-    ( someFunc
-    ) where
+module Lib where
 
 import qualified Agda.Syntax.Abstract as A
 import Agda.Syntax.Translation.ConcreteToAbstract
@@ -39,6 +37,8 @@ import Translation hiding (printRules)
 pt = "/mnt/win/Documenten/CS/TFL/martin/examples/Example2.agda"
 pathFer = "/home/ferdinand/University/TFL/martin/examples/Example2.agda"
 
+
+{-
 pt1 = parseFile' moduleParser (mkAbsolute pt)
 
 someFunc :: IO ()
@@ -89,3 +89,4 @@ pipeline abstr n = do
 printRules :: HintDB -> String
 printRules [] = ""
 printRules (x:xs) = show x ++ "\n" ++ printRules xs
+-}

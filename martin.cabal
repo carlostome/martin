@@ -18,7 +18,6 @@ library
   exposed-modules:     Lib
                        ProofSearch
                        Translation
-                       Translation2
                        SearchTree
                        Strategy
   build-depends:       base >= 4.7 && < 5
