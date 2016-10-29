@@ -32,7 +32,7 @@ import           Agda.Utils.FileName
 import           Agda.Utils.Hash
 import           Agda.Utils.IO.Binary
 import           Agda.Utils.Lens
-import           Agda.Utils.Monad
+import           Agda.Utils.Monad hiding (ifM)
 import           Agda.Utils.Null
 import           Agda.Utils.Pretty
 import           Agda.Utils.Time
@@ -47,6 +47,7 @@ import           Control.DeepSeq
 import           Control.Monad.Except
 import           Control.Monad.IO.Class
 import           Control.Monad.State.Strict
+import Control.Monad.Extra
 import Control.Monad.Writer
 import Control.Monad.Reader
 import qualified Data.List                                  as List
@@ -134,6 +135,9 @@ runInteractiveSession verbosity agdaFile = do
     Right _ -> return ()
 
 
+debug :: Show a => a -> TCM ()
+debug str = when True (liftIO (print str))
+
 -- | Apply a proof search strategy,
 -- if not possible select a variable and split.
 proofSearchStrategy :: TCState
@@ -143,27 +147,33 @@ proofSearchStrategy :: TCState
 proofSearchStrategy tcs prog hole@(mi,ii) = do
   -- First we check whether the meta is in a top level rhs.
   (goal, hdb) <- goalAndRules prog ii
-  let prfs = dfs $ cutoff 10 $ solve goal hdb
+  let prfs = dfs $ cutoff 6 $ solve goal hdb
+  liftIO (print $ map proofToStr prfs)
+  debug (show ii)
   if checkTopLevel (mi,ii) prog
      then do
-       liftIO (print $ "Top level: " ++ show ii)
-       let var = selectVarToSplit prog hole
-       liftIO (print $ "Selected variable: " ++ var )
+       debug ("Top level: " ++ show ii)
+       let var = "x" --selectVarToSplit prog hole
+       debug ("Selected variable: " ++ var)
        if List.null prfs
           then splitWithVarAtIdStrategy tcs var prog hole
           else do
-            solution <- trySolutions tcs prog hole prfs
-            maybe (splitWithVarAtIdStrategy tcs var prog hole)
-                  (return . RefineStrategy)
-                  solution
+            solutions <- mapM (trySolution prog hole) prfs
+            let sol = catMaybes $ solutions
+            debug sol
+            if List.null sol
+               then splitWithVarAtIdStrategy tcs var prog hole
+               else return (RefineStrategy sol)
      else do
        if List.null prfs
           then return FailStrategy
           else do
-            solution <- trySolutions tcs prog hole prfs
-            maybe (return FailStrategy)
-                  (return . RefineStrategy)
-                  solution
+            solutions <- mapM (trySolution prog hole) prfs
+            let sol = catMaybes $ solutions
+            debug sol
+            if List.null solutions
+               then return FailStrategy
+               else return (RefineStrategy sol)
 
 -- | Select a variable in the scope of an Interation id
 -- to split.
@@ -175,43 +185,28 @@ selectVarToSplit prog hole@(mi,ii)=
   in show (localVar x)
 
 
-type Success a = Either a ()
-failS   = Right ()
-succedS = Left
-
-give
-  :: InteractionId  -- ^ Hole.
-  -> A.Expr         -- ^ The expression to give.
-  -> TCM Bool       -- ^ If successful, the very expression is returned unchanged.
-give ii e = liftTCM $ do
-  -- if Range is given, update the range of the interaction meta
-  mi  <- lookupInteractionId ii
-  -- Try to give mi := e
-  tryIt (B.giveExpr mi e)
-        (const (return True))
-        (const (return False))
-
--- | Try a Proof to see if it typechecks/passes termination checker.
-trySolutions :: TCState -> [A.Declaration]
+-- | Try a Proof to see if it typechecks termination checker.
+-- A known problem with this function is if the we feed the hole
+-- with a non structurally smaller expression then it just loops.
+-- This is also a bug in Agda.
+trySolution :: [A.Declaration]
             -> (I.MetaInfo, InteractionId)
-            -> [Proof] -> TCM (Maybe Proof)
-trySolutions tcs prog hole@(mi,ii) []  = return Nothing
-trySolutions tcs prog hole@(mi,ii) (proof:prs)  =
-  do aexpr <- proofToAbstractExpr ii proof
-     liftIO (print (proofToStr proof))
-     success <- give ii aexpr
-     if success
-       then do
-         let newProg = replaceHole ii aexpr prog
-         put tcs
-         tryIt (checkDecls newProg)
-               (\_ -> do unfreezeMetas
-                         liftIO (print "BP 6")
-                         return (Just proof))
-               (const (trySolutions tcs prog hole prs))
-       else
-        trySolutions tcs prog hole prs
-
+            -> Proof -> TCM (Maybe Proof)
+trySolution prog hole@(mi,ii) proof  =
+  do -- Save the old TCM state because proofToAbstractExpr may change it.
+     tcmState <- get
+     -- Transform the proof into an Abstract.Expr.
+     aexpr <- proofToAbstractExpr ii proof
+     -- Replace the hole in the old program with the new expression.
+     let newProg = replaceHole ii aexpr prog
+     -- Try to typecheck the new program.
+     tryIt (checkDecls newProg)
+           -- If the program typechecks, then restore the old TCM state.
+           -- And return the proof.
+           (\_ -> do put tcmState
+                     return (Just proof))
+           -- If it fails then we assume the proof is not valid.
+           (const (return Nothing))
 
 -- | Split a given variable in an InteractionId
 splitWithVarAtIdStrategy :: TCState -> String
@@ -219,16 +214,20 @@ splitWithVarAtIdStrategy :: TCState -> String
                          -> (I.MetaInfo, InteractionId)
                          -> TCM ClauseStrategy
 splitWithVarAtIdStrategy tcs var prog (mi,ii) = do
+  debug ("splitting on var: " ++ var)
   (_, newClauses) <- MC.makeCase ii noRange var
   let newProg  = replaceClauses ii newClauses prog
   put tcs
   (newP, oldMetas) <- rebuildInteractionPoints' newProg
-  checkDecls newP
+  -- If we have properties in the program, splitting in the wrong variable
+  -- can lead to a fail in typechecking, therefore at this point we should
+  -- backtrack and continue with other variable.
+  (checkDecls newP)
   unfreezeMetas
   let newMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi newP
                           , not (ii `elem` oldMetas) ]
-  liftIO (print "hola")
-  SplitStrategy var <$> mapM (proofSearchStrategy tcs newProg) newMetas
+  debug (map snd newMetas)
+  SplitStrategy var <$> mapM (proofSearchStrategy tcs newP) newMetas
 
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.

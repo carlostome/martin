@@ -167,7 +167,8 @@ apply goal r xs = new : rest where
 -- | Solves a partial proof given a set of rules.
 solveAcc :: HintDB -> PartialProof -> SearchT Proof
 solveAcc rules (PartialProof [] p) = return $ p [] -- no goals left
-solveAcc rules (PartialProof (g : gs) p) = StateT $ wrap $ map (instantiateRule >=> step) rules where
+solveAcc rules (PartialProof (g : gs) p) =
+  StateT $ wrap $ map (instantiateRule >=> step) rules where
   -- wraps all stateful branches in a node
   wrap xs s = Node $ map (flip runStateT s) xs
   -- tries to apply a single rule

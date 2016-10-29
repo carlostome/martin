@@ -45,6 +45,7 @@ executable martin-exe
                      , unordered-containers
                      , optparse-applicative
                      , free
+                     , extra
                      , geniplate-mirror
   default-language:    Haskell2010
 
