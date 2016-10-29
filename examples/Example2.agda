@@ -19,6 +19,6 @@ add x y = {!add x x!}
 p1 : (n : Nat) -> add zero n == n
 p1 n = refl
 
--- p2 : (n : Nat) -> (m : Nat) -> add (succ n) m == succ (add n m)
--- p2 n m = refl
+p2 : (n : Nat) -> (m : Nat) -> add (succ n) m == succ (add n m)
+p2 n m = refl
 

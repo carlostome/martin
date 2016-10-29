@@ -58,11 +58,12 @@ import Text.Printf
 import Debug.Trace
 
 import Data.Generics.Geniplate
-import Strategy
 import SearchTree
 import Data.List ((\\))
 import Data.Monoid
 import Data.Maybe (catMaybes, listToMaybe)
+
+import qualified Strategy as S
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
@@ -112,161 +113,28 @@ runInteractiveSession verbosity agdaFile = do
 
     unfreezeMetas -- IMPORTANT: if metas are not unfrozen, we cannot refine etc.
 
-    str <- generateStrategy initialState abstractDecls
-    liftIO (print str)
-
-    -- setup initial state and the environment
-    let exState = ExerciseState
-          { exerciseDecls = abstractDecls
-          , exerciseUndo = [] }
-        exEnv = ExerciseEnv
-          { exerciseFile = absPath
-          , exerciseVerbosity = verbosity
-          , exerciseInitialAgdaState = initialState
-          }
-    -- run user session
-    st <- execStateT (runReaderT exerciseSession exEnv) exState
-    -- if all went well, st contains the solved exercise
-    -- TODO: pretty print and send to teacher ;)
-    return ()
-  -- print errors
+    -- -- setup initial state and the environment
+    -- let exState = ExerciseState
+    --       { exerciseDecls = abstractDecls
+    --       , exerciseUndo = [] }
+    --     exEnv = ExerciseEnv
+    --       { exerciseFile = absPath
+    --       , exerciseVerbosity = verbosity
+    --       , exerciseInitialAgdaState = initialState
+    --       }
+    -- -- run user session
+    -- st <- execStateT (runReaderT exerciseSession exEnv) exState
+    -- -- if all went well, st contains the solved exercise
+    -- -- TODO: pretty print and send to teacher ;)
+    -- return ()
+  -- -- print errors
+    return abstractDecls
   case ret of
     Left err -> printf "Exercise session failed with\n%s\n" err
-    Right _ -> return ()
+    Right decl -> do session <- S.initSession verbosity
+                     str <- S.buildStrategy session decl
+                     print str
 
-
-debug :: Show a => a -> TCM ()
-debug str = when True (liftIO (print str))
-
--- | Apply a proof search strategy,
--- if not possible select a variable and split.
-proofSearchStrategy :: TCState
-                    -> [A.Declaration]
-                    -> (I.MetaInfo, InteractionId)
-                    -> TCM ClauseStrategy
-proofSearchStrategy tcs prog hole@(mi,ii) = do
-  -- First we check whether the meta is in a top level rhs.
-  (goal, hdb) <- goalAndRules ii
-  let prfs = dfs $ cutoff 6 $ solve goal hdb
-  liftIO (print $ map proofToStr prfs)
-  debug (show ii)
-  if checkTopLevel (mi,ii) prog
-     then do
-       debug ("Top level: " ++ show ii)
-       let var = "x" --selectVarToSplit prog hole
-       debug ("Selected variable: " ++ var)
-       if List.null prfs
-          then splitWithVarAtIdStrategy tcs var prog hole
-          else do
-            solutions <- mapM (trySolution prog hole) prfs
-            let sol = catMaybes $ solutions
-            debug sol
-            if List.null sol
-               then splitWithVarAtIdStrategy tcs var prog hole
-               else return (RefineStrategy sol)
-     else do
-       if List.null prfs
-          then return FailStrategy
-          else do
-            solutions <- mapM (trySolution prog hole) prfs
-            let sol = catMaybes $ solutions
-            debug sol
-            if List.null solutions
-               then return FailStrategy
-               else return (RefineStrategy sol)
-
--- | Select a variable in the scope of an Interation id
--- to split.
-selectVarToSplit :: [A.Declaration]
-                 -> (I.MetaInfo, InteractionId)
-                 -> String
-selectVarToSplit prog hole@(mi,ii)=
-  let (x:xs) = map snd $ scopeLocals $ metaScope mi
-  in show (localVar x)
-
-
--- | Try a Proof to see if it typechecks termination checker.
--- A known problem with this function is if the we feed the hole
--- with a non structurally smaller expression then it just loops.
--- This is also a bug in Agda.
-trySolution :: [A.Declaration]
-            -> (I.MetaInfo, InteractionId)
-            -> Proof -> TCM (Maybe Proof)
-trySolution prog hole@(mi,ii) proof  =
-  do -- Save the old TCM state because proofToAbstractExpr may change it.
-     tcmState <- get
-     -- Transform the proof into an Abstract.Expr.
-     aexpr <- proofToAbstractExpr ii proof
-     -- Replace the hole in the old program with the new expression.
-     let newProg = replaceHole ii aexpr prog
-     -- Try to typecheck the new program.
-     tryIt (checkDecls newProg)
-           -- If the program typechecks, then restore the old TCM state.
-           -- And return the proof.
-           (\_ -> do put tcmState
-                     return (Just proof))
-           -- If it fails then we assume the proof is not valid.
-           (const (return Nothing))
-
--- | Split a given variable in an InteractionId
-splitWithVarAtIdStrategy :: TCState -> String
-                         -> [A.Declaration]
-                         -> (I.MetaInfo, InteractionId)
-                         -> TCM ClauseStrategy
-splitWithVarAtIdStrategy tcs var prog (mi,ii) = do
-  debug ("splitting on var: " ++ var)
-  (_, newClauses) <- MC.makeCase ii noRange var
-  let newProg  = replaceClauses ii newClauses prog
-  put tcs
-  (newP, oldMetas) <- rebuildInteractionPoints' newProg
-  -- If we have properties in the program, splitting in the wrong variable
-  -- can lead to a fail in typechecking, therefore at this point we should
-  -- backtrack and continue with other variable.
-  (checkDecls newP)
-  unfreezeMetas
-  let newMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi newP
-                          , not (ii `elem` oldMetas) ]
-  debug (map snd newMetas)
-  SplitStrategy var <$> mapM (proofSearchStrategy tcs newP) newMetas
-
-
--- | Replaces all question marks with fresh interaction points and registers them with the type checker.
--- This step is necessary after resetting the type checker state.
-rebuildInteractionPoints' :: A.ExprLike e
-                          => e -> TCM (e,[InteractionId])
-rebuildInteractionPoints' e = runWriterT (A.traverseExpr go e) where
-  go (A.QuestionMark m ii) = do
-    nii <- lift $ registerInteractionPoint noRange Nothing
-    when (ii /= (-1)) $ tell [nii]
-    return (A.QuestionMark m nii)
-  go other = return other
-
--- | Check if the Hole is in a top level position.
-checkTopLevel :: (I.MetaInfo, InteractionId) -> [A.Declaration] -> Bool
-checkTopLevel (mi, ii) = or . map look
-  where
-    look (A.Mutual _ decls)      = or $ map look decls
-    look (A.Section _ _ _ decls) = or $ map look decls
-    look (A.RecDef _ _ _ _ _ _ _ decls) = or $ map look decls
-    look (A.ScopedDecl _ decls)         = or $ map look decls
-    look (A.FunDef _ _ _ clauses) = or $ map lookClause clauses
-    look _ = False
-
-    lookClause cls = case A.clauseRHS cls of
-      A.RHS e -> isTopLevelHole e
-      _ -> False
-
-    isTopLevelHole (A.QuestionMark mi hole) = ii == hole
-    isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
-    isTopLevelHole _ = False
-
--- | Generate a Strategy given a list of Declaration.
--- This is the top level function.
-generateStrategy :: TCState -> [A.Declaration] -> TCM [ClauseStrategy]
-generateStrategy tcs prog = do
-  let metas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi prog]
-  liftIO (print . map snd $ metas)
-  mapM (proofSearchStrategy tcs prog) metas
 
 -- | This is where all the exercise solving should happen
 exerciseSession :: ExerciseM ()
@@ -364,12 +232,6 @@ replaceClauses ii newClauses prog = map update prog where
   patternDecls (A.DefP _ _ a) = concatMap (patternDecls . namedThing . unArg) a
   patternDecls _ = []
 
--- | Replaces a hole identified by its interaction id with a new expression.
-replaceHole :: A.ExprLike e => InteractionId -> A.Expr -> e -> e
-replaceHole ii repl = A.mapExpr $ \e -> case e of
-                                  A.QuestionMark _ iiq
-                                    | iiq == ii -> repl
-                                  other -> other
 
 -- | Adds the current program and TCM state to the undo history.
 recordState :: ExerciseM ()
@@ -422,6 +284,19 @@ undo = do
       return True
     _ -> return False
 
+-- | Takes a proof and converts it to an abstract expression in the context of the given hole.
+proofToAbstractExpr :: InteractionId -> Proof -> TCM A.Expr
+proofToAbstractExpr ii proof = B.parseExprIn ii noRange (proofStr proof) where
+  proofStr (Proof name args _)
+    | List.null args = name
+    | otherwise = "(" ++ List.unwords (name : map proofStr args) ++ ")"
+
+-- | Replaces a hole identified by its interaction id with a new expression.
+replaceHole :: A.ExprLike e => InteractionId -> A.Expr -> e -> e
+replaceHole ii repl = A.mapExpr $ \e -> case e of
+                                  A.QuestionMark _ iiq
+                                    | iiq == ii -> repl
+                                  other -> other
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
 rebuildInteractionPoints :: A.ExprLike e => e -> ExerciseM e
@@ -519,13 +394,6 @@ initAgda verbosity = do
   -- return with state right after initialization, to be able to speed up things when we need to reset
   get
 
-
--- | Takes a proof and converts it to an abstract expression in the context of the given hole.
-proofToAbstractExpr :: InteractionId -> Proof -> TCM A.Expr
-proofToAbstractExpr ii proof = B.parseExprIn ii noRange (proofStr proof) where
-  proofStr (Proof name args _)
-    | List.null args = name
-    | otherwise = "(" ++ List.unwords (name : map proofStr args) ++ ")"
 
 -- * Some functions solely used for testing stuff
 
