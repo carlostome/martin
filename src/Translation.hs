@@ -25,6 +25,8 @@ import Agda.TypeChecking.Monad                      (TCM, lookupInteractionId)
 
 
 
+import Debug.Trace 
+
 -- Top level functions
 
 -- Use these to create all the rules and generate a goal
@@ -143,6 +145,7 @@ exprToPsTerm (Pi _ _ e) = exprToPsTerm e
 exprToPsTerm (Def qn) = Just $ (con $ qNameS qn,[])
 exprToPsTerm (Fun _ arg e) = exprToPsTerm e >>= \(concl, prems) -> Just $ (concl, exprToPsTermPrem (unArg arg) ++ prems)
 exprToPsTerm (Set _ _) = Nothing
+exprToPsTerm (App _ _ _) = Nothing
 
 exprToPsTermPrem :: Expr -> [PsTerm]
 exprToPsTermPrem (ScopedExpr _ e) = exprToPsTermPrem e

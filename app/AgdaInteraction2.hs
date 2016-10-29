@@ -143,23 +143,16 @@ proofSearchStrategy :: TCState
 proofSearchStrategy tcs prog hole@(mi,ii) = do
   -- First we check whether the meta is in a top level rhs.
   (goal, hdb) <- goalAndRules prog ii
-  liftIO (print goal >> print hdb)
   let prfs = dfs $ cutoff 10 $ solve goal hdb
-  -- (B.OfType _ t) <- B.typeOfMeta B.Normalised ii
-  -- let goal = typeToGoal t
-  -- scopeTExprs <- thingsInScopeWithType ii
-  -- let hdb  = exHDB -- map exprToRule scopeTExprs
-  -- let prfs = dfs $ cutoff 10 $ solve goal hdb
-
   if checkTopLevel (mi,ii) prog
      then do
+       liftIO (print $ "Top level: " ++ show ii)
        let var = selectVarToSplit prog hole
+       liftIO (print $ "Selected variable: " ++ var )
        if List.null prfs
           then splitWithVarAtIdStrategy tcs var prog hole
           else do
-            liftIO (print "DP 3")
-            solution <- (listToMaybe . catMaybes)
-                        <$> mapM (trySolution tcs prog hole) prfs
+            solution <- trySolutions tcs prog hole prfs
             maybe (splitWithVarAtIdStrategy tcs var prog hole)
                   (return . RefineStrategy)
                   solution
@@ -167,8 +160,7 @@ proofSearchStrategy tcs prog hole@(mi,ii) = do
        if List.null prfs
           then return FailStrategy
           else do
-            solution <- (listToMaybe . catMaybes)
-                        <$> mapM (trySolution tcs prog hole) prfs
+            solution <- trySolutions tcs prog hole prfs
             maybe (return FailStrategy)
                   (return . RefineStrategy)
                   solution
@@ -183,22 +175,42 @@ selectVarToSplit prog hole@(mi,ii)=
   in show (localVar x)
 
 
+type Success a = Either a ()
+failS   = Right ()
+succedS = Left
+
+give
+  :: InteractionId  -- ^ Hole.
+  -> A.Expr         -- ^ The expression to give.
+  -> TCM Bool       -- ^ If successful, the very expression is returned unchanged.
+give ii e = liftTCM $ do
+  -- if Range is given, update the range of the interaction meta
+  mi  <- lookupInteractionId ii
+  -- Try to give mi := e
+  tryIt (B.giveExpr mi e)
+        (const (return True))
+        (const (return False))
+
 -- | Try a Proof to see if it typechecks/passes termination checker.
-trySolution :: TCState -> [A.Declaration]
+trySolutions :: TCState -> [A.Declaration]
             -> (I.MetaInfo, InteractionId)
-            -> Proof -> TCM (Maybe Proof)
-trySolution tcs prog hole@(mi,ii) proof =
-  (do aexpr <- proofToAbstractExpr ii proof
-      expr  <- B.give ii Nothing aexpr
-      let newProg = replaceHole ii expr prog
-      put tcs
-      liftIO (print "DP 4")
-      checkDecls newProg
-      liftIO (print "DP 5")
-      unfreezeMetas
-      liftIO (print "DP 6")
-      return (Just proof))
-  `catchError` (const (return Nothing))
+            -> [Proof] -> TCM (Maybe Proof)
+trySolutions tcs prog hole@(mi,ii) []  = return Nothing
+trySolutions tcs prog hole@(mi,ii) (proof:prs)  =
+  do aexpr <- proofToAbstractExpr ii proof
+     liftIO (print (proofToStr proof))
+     success <- give ii aexpr
+     if success
+       then do
+         let newProg = replaceHole ii aexpr prog
+         put tcs
+         tryIt (checkDecls newProg)
+               (\_ -> do unfreezeMetas
+                         liftIO (print "BP 6")
+                         return (Just proof))
+               (const (trySolutions tcs prog hole prs))
+       else
+        trySolutions tcs prog hole prs
 
 
 -- | Split a given variable in an InteractionId
@@ -215,6 +227,7 @@ splitWithVarAtIdStrategy tcs var prog (mi,ii) = do
   unfreezeMetas
   let newMetas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi newP
                           , not (ii `elem` oldMetas) ]
+  liftIO (print "hola")
   SplitStrategy var <$> mapM (proofSearchStrategy tcs newProg) newMetas
 
 
@@ -253,6 +266,7 @@ checkTopLevel (mi, ii) = or . map look
 generateStrategy :: TCState -> [A.Declaration] -> TCM [ClauseStrategy]
 generateStrategy tcs prog = do
   let metas = [(mi, ii) | A.QuestionMark mi ii <- concatMap universeBi prog]
+  liftIO (print . map snd $ metas)
   mapM (proofSearchStrategy tcs prog) metas
 
 -- | This is where all the exercise solving should happen
