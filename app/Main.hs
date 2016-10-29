@@ -49,6 +49,10 @@ progOptionParser = MartinOpt
          <> OA.help "Path of the Agda file containing the exercise")
 
 main :: IO ()
+main = undefined
+
+{- OUTDATED
+main :: IO ()
 main = OA.execParser opts >>= runMartin
   where
     opts = OA.info (OA.helper <*> progOptionParser)
@@ -220,3 +224,4 @@ split holePath userVar arity partSol exStrat = second getAlt $ runWriter (goClau
 modelMismatch :: a
 modelMismatch = error "model does not match already constructed part of user solution, something went wrong on the way"
 
+-}

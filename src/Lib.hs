@@ -26,7 +26,7 @@ import Agda.Syntax.Abstract.Pretty
 
 import ProofSearch
 import SearchTree
-import Translation
+import Translation hiding (printRules)
 
 -- Two ways of parsing agda programs
 -- Either we parse a full agda program from a file
