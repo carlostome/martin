@@ -1,10 +1,15 @@
-module Translation where
+{-| This module contains the functionality to translate Agda terms to proof search terms.
+-}
+module Translation
+  ( goalAndRules
+  , generateHints
+  , generateGoal
+  ) where
 
 import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
-import qualified Agda.Syntax.Internal                       as I
 import           Agda.Syntax.Common
-import           Agda.Syntax.Scope.Base
+import qualified Agda.Syntax.Internal                       as I
 import           Agda.Syntax.Translation.InternalToAbstract
 import           Agda.TypeChecking.Monad
 import           Agda.TypeChecking.Monad.Builtin
@@ -13,9 +18,9 @@ import           Agda.Utils.Pretty
 
 import           Control.Arrow
 import           Control.Monad
-import Control.Monad.Trans.Maybe
-import qualified Data.Set                                   as Set
+import           Control.Monad.Trans.Maybe
 
+import qualified AgdaUtil                                   as AU
 import           Debug.Trace
 import qualified ProofSearch                                as Ps
 
@@ -24,7 +29,7 @@ import qualified ProofSearch                                as Ps
 goalAndRules :: InteractionId -> TCM (Ps.PsTerm, Ps.HintDB)
 goalAndRules ii = do
   -- get all things defined at the interaction point
-  scope <- thingsInScopeWithType ii
+  scope <- AU.thingsInScopeWithType ii
   -- returns the type of the interaction point (safe to pattern match, result is always "B.OfType")
   B.OfType _ ty <- B.typeOfMeta B.Normalised ii
   (,)
@@ -163,18 +168,3 @@ piTypeToPsTerms cv scope ((argName, h, argTy):args) ret = case h of
 qNameS :: A.QName -> String
 qNameS (A.QName _ n) = show $ A.nameConcrete n
 
--- | Returns everything that is in scope at a given interaction point.
--- The first A.Expr is either a Var referring to a local bound variable
--- or a Def referring to a global definition.
--- The second A.Expr is the type of that thing.
-thingsInScopeWithType :: InteractionId -> TCM [(Either A.Name A.QName, A.Expr)]
-thingsInScopeWithType ii = do
-  m <- lookupInteractionId ii
-  mi <- lookupMeta m
-  let s = getMetaScope mi
-      locals = map (localVar . snd) $ scopeLocals s
-      globals = Set.toList $ scopeInScope s
-      allExprs = map A.Var locals ++ map A.Def globals
-  types <- mapM (B.typeInMeta ii B.Normalised) allExprs
-  let stuffWithTypes = zip (map Left locals ++ map Right globals) types
-  return stuffWithTypes

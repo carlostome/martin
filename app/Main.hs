@@ -26,7 +26,6 @@ import           ProofSearch
 import Control.Arrow (first, second)
 import           Control.Exception
 import           Control.Monad.IO.Class
-import           Control.Monad.Trans.Free
 import Control.Monad.State
 import Control.Monad.RWS
 import Control.Monad.Writer
