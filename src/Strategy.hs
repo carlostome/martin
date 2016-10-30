@@ -36,6 +36,7 @@ import           Control.Monad.Trans.Maybe
 import           Control.Monad.Writer
 import           Data.Generics.Geniplate
 import qualified Data.List                       as List
+import qualified Data.Either                     as ETH
 import           Debug.Trace
 import           System.FilePath                 ((</>))
 
@@ -122,29 +123,32 @@ selectVarsToSplit prog ii = do
             -- From the clause we get all patterns
         let dBrPats = deBruijnPats cl
             -- List of all found variables with their constructor depth
-            allVarDepths = concat $ map varLevels dBrPats
+            allVarDepths = concatMap varDepths dBrPats
             -- Only tuples whose constructor depth was at most the given limit
             varDepthsLim = filter (\(n, _) -> n <= lim) allVarDepths
             -- sorted by constructor depth from lowest to highest
             sortedVarDepths = List.sort varDepthsLim
-        -- We no longer need the constructor depths at this point
-        return $ map snd sortedVarDepths
+        -- Find all local variables in scope
+        localVars <- AU.varsInScope ii
+        -- Only visible local variables can be split on
+        return $ List.intersect (map snd sortedVarDepths) (map show localVars)
 
 
 deBruijnPats :: I.Clause -> [I.DeBruijnPattern]
 deBruijnPats cl = map namedArg $ I.namedClausePats cl
 
 -- 1. Removes the order indice in the DeBruijnPattern.
--- 2. Finds all variables in the pattern and assigns it a hierarchy level of 0
--- 3. For every cons that we pass through we increment the hierarchy level
--- 4. Returns a list of tuple of a variable and its hierarchy level
-varLevels :: I.DeBruijnPattern -> [(Int, String)]
-varLevels dBrPat = varLevel' (fmap snd dBrPat)
+-- 2. Finds all variables in the pattern and assigns it a constructor depth of 0
+-- 3. For every cons that we pass through we increment the constructor depth
+-- 4. Returns a list of tuple of a variable and its constructor depth
+varDepths :: I.DeBruijnPattern -> [(Int, String)]
+varDepths dBrPat = varLevel' (fmap snd dBrPat)
   where
     varLevel' (I.VarP x)
+    -- We can't split on an underscore
       | x /= "_"              = [(0, x)]
       | otherwise             = []
-    varLevel' (I.ConP _ _ xs) = map (\(n,x) -> (n + 1, x)) $ concat $ map (varLevel' . namedArg) xs
+    varLevel' (I.ConP _ _ xs) = map (\(n,x) -> (n + 1, x)) $ concatMap (varLevel' . namedArg) xs
     varLevel' _               = []
 
 

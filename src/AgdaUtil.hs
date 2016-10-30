@@ -13,6 +13,7 @@ module AgdaUtil
   -- * Information
   , checkTopLevel
   , thingsInScopeWithType
+  , varsInScope
   -- * Managing Agda state
   , initAgda
   ) where
@@ -210,3 +211,12 @@ setMetaNumbersToInteraction :: A.ExprLike e => e -> e
 setMetaNumbersToInteraction = A.mapExpr go where
   go (A.QuestionMark meta ii) = A.QuestionMark meta { metaNumber = Just $ MetaId $ interactionId ii } ii
   go other = other
+
+-- | Returns the local variables that are in scope at a hole.
+varsInScope :: InteractionId -> TCM [A.Name]
+varsInScope ii = do
+  m <- lookupInteractionId ii
+  mi <- lookupMeta m
+  let s = getMetaScope mi
+      locals = map (localVar . snd) $ scopeLocals s
+  return locals
