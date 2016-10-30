@@ -14,4 +14,4 @@ map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
 map f xs = {!!}
 
 replicate : forall {A} -> (n : Nat) -> A -> Vec A n
-replicate n x = {!!}
+replicate count x = {!!}

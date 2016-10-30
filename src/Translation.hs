@@ -9,6 +9,7 @@ module Translation
 import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
 import           Agda.Syntax.Common
+import           Agda.Syntax.Info
 import qualified Agda.Syntax.Internal                       as I
 import           Agda.Syntax.Translation.InternalToAbstract
 import           Agda.TypeChecking.Monad
@@ -28,18 +29,16 @@ import qualified ProofSearch                                as Ps
 -- and a hint database containing all definitions that are in scope.
 goalAndRules :: InteractionId -> TCM (Ps.PsTerm, Ps.HintDB)
 goalAndRules ii = do
-  -- get all things defined at the interaction point
-  scope <- AU.thingsInScopeWithType ii
   -- returns the type of the interaction point (safe to pattern match, result is always "B.OfType")
   B.OfType _ ty <- B.typeOfMeta B.Normalised ii
   (,)
     <$> (runMaybeT (generateGoal ty) >>= maybe (throwError $ strMsg "invalid goal") pure)
-    <*> generateHints scope
+    <*> generateHints ii
 
 -- | Generates a hint database from a list of definitions,
 -- consisting of either a local or a global name together with a type.
-generateHints :: [(Either A.Name A.QName, A.Expr)] -> TCM Ps.HintDB
-generateHints sigs = concat <$> mapM build sigs where
+generateHints :: InteractionId -> TCM Ps.HintDB
+generateHints ii = AU.thingsInScopeWithType ii >>= \sigs -> concat <$> mapM build sigs where
   -- makes a string with an unqualified name
   nameStr = either prettyShow qNameS
   build (def, ty) = generateRules (nameStr def) ty
@@ -140,6 +139,10 @@ typeToPsTerms cv scope other = case flattenVisibleApp other of
     typeToPsTerms cv scope con
   -- set expressions
   (A.Set _ lvl : _) -> return [Ps.con "Set" (Ps.con $ show lvl)]
+  -- fresh metas somewhere in the type can be turned into variables
+  (A.Underscore mi : _) -> do
+    let uname = "_" ++ metaNameSuggestion mi ++ "_" ++ maybe "" show (metaNumber mi)
+    return [Ps.var uname]
   -- unsupported syntax
   what -> traceM ("UNSUPPORTED " ++ show what) >> mzero -- unsupported syntax
 

@@ -54,11 +54,10 @@ data ClauseStrategy
   -- that the split introduced an absurd-pattern.
   | RefineStrategy P.Proof
   -- ^ refines the current hole with a proof found by the proof search
-  -- | FailStrategy
   deriving (Read, Eq, Ord)
 
 -- | A strategy for solving an exercise consists of one strategy for each clause of the exercise
-type ExerciseStrategy = [ClauseStrategy]
+type ExerciseStrategy = [Maybe ClauseStrategy]
 
 instance Show ClauseStrategy where
   show (SplitStrategy s cl) = unlines
@@ -214,7 +213,7 @@ runTCMSearchFresh tcm = view initialTCState >>= flip runTCMSearch tcm
 
 -- | Generate a Strategy given a list of Declaration.
 -- This is the top level function.
-generateStrategy :: [A.Declaration] -> Search [ClauseStrategy]
+generateStrategy :: [A.Declaration] -> Search ExerciseStrategy
 generateStrategy prog = do
   (newDecls, tcs') <- runTCMSearchFresh $ do
     (newDecl,_) <- AU.rebuildInteractionPoints prog
@@ -224,10 +223,10 @@ generateStrategy prog = do
   let metas = [ ii | A.QuestionMark mi ii <- concatMap universeBi newDecls]
       sprog = StatefulProgram newDecls tcs'
   debug ("Generate strategy for metas: " ++ show metas)
-  mapM (proofSearchStrategy sprog) metas
+  mapM (lift . runMaybeT . proofSearchStrategy sprog) metas
 
 data Session = Session
-  { buildStrategy :: [A.Declaration] -> IO (Maybe [ClauseStrategy]) }
+  { buildStrategy :: [A.Declaration] -> IO (Maybe ExerciseStrategy) }
 
 initSession :: Int -> AbsolutePath -> IO Session
 initSession verbosity path = do
@@ -239,6 +238,6 @@ initSession verbosity path = do
         , _depthLimit     = 6
         }
   return Session
-     { buildStrategy = \decls -> runReaderT (runMaybeT (generateStrategy decls)) env }
+     { buildStrategy = \decls -> runReaderT (runMaybeT $ generateStrategy decls) env }
 
 

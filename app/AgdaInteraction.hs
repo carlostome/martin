@@ -11,6 +11,7 @@ import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
 import           Agda.Syntax.Abstract.Pretty
 import           Agda.Syntax.Common
+import           Agda.Syntax.Position
 import           Agda.Syntax.Translation.ConcreteToAbstract
 import           Agda.TheTypeChecker
 import           Agda.TypeChecking.Errors
@@ -37,16 +38,16 @@ import qualified Text.ParserCombinators.ReadP               as ReadP
 import qualified Text.ParserCombinators.ReadPrec            as ReadPrec
 import           Text.Printf
 import           Text.Read                                  (readPrec)
-
 import           Data.Generics.Geniplate
 import           Data.List                                  ((\\))
-import           Data.Maybe                                 (catMaybes,
-                                                             listToMaybe)
+import           Data.Maybe
 import           Data.Monoid
-import           SearchTree
 
+import           SearchTree
 import qualified AgdaUtil                                   as AU
 import qualified Strategy                                   as S
+import qualified ProofSearch                                   as Ps
+import qualified Translation                                   as T
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
@@ -56,8 +57,8 @@ import qualified Strategy                                   as S
 data ExerciseState = ExerciseState
   { _exerciseProgram  :: S.StatefulProgram
   -- ^ the current state of the program
-  , _exerciseStrategy :: Maybe S.ExerciseStrategy
-  , _exerciseUndo     :: [(S.StatefulProgram, Maybe S.ExerciseStrategy)]
+  , _exerciseStrategy :: S.ExerciseStrategy
+  , _exerciseUndo     :: [(S.StatefulProgram, S.ExerciseStrategy)]
   -- ^ a history of program states
   }
 
@@ -68,6 +69,7 @@ data ExerciseEnv = ExerciseEnv
   { _exerciseFile    :: AbsolutePath
   , _exerciseTCState :: TCState
   , _exerciseTCEnv   :: TCEnv
+  , _exerciseSession :: S.Session
   }
 
 makeLenses ''ExerciseEnv
@@ -107,12 +109,13 @@ runInteractiveSession verbosity agdaFile = do
     Left err -> printf "Exercise session failed with\n%s\n" err
     Right (initialState, decls) -> do
       session <- S.initSession verbosity absPath
-      str <- S.buildStrategy session decls
+      Just str <- S.buildStrategy session decls
 
       let exEnv = ExerciseEnv
             { _exerciseFile = absPath
             , _exerciseTCState = initialState
             , _exerciseTCEnv = initEnv { envCurrentPath = Just absPath }
+            , _exerciseSession = session
             }
           exState = ExerciseState
             { _exerciseProgram = S.StatefulProgram decls progState
@@ -147,6 +150,7 @@ data HoleCommand
   | CmdRefine String
   | CmdSplit String
   | CmdHoleLeave
+  | CmdHoleHint
   deriving (Eq, Ord, Show, Read)
 
 readPTopCommand :: ReadP.ReadP TopCommand
@@ -163,6 +167,7 @@ readPHoleCommand = msum
   [ CmdHoleType <$ ReadP.char 't'
   , CmdHoleContext <$ ReadP.char 'c'
   , CmdHoleLeave <$ ReadP.char 'l'
+  , CmdHoleHint <$ ReadP.char 'h'
   , CmdRefine <$> (ReadP.char 'r' *> ReadP.skipSpaces *> ReadP.many1 ReadP.get)
   , CmdSplit <$> (ReadP.char 's' *> ReadP.skipSpaces *> ReadP.many1 ReadP.get)
   ]
@@ -175,48 +180,51 @@ runReadP p s =
 
 exerciseLoop :: ExerciseM ()
 exerciseLoop = do
-  minput <- getInputLine "% "
-  let cmd = maybe (Just CmdTopExit) (runReadP readPTopCommand) minput
-  catchTCMErr exerciseLoop $ case cmd of
-    Nothing -> do
-      outputStrLn "Unknown command!"
-      exerciseLoop
-    Just CmdTopUndo -> do
-      undo >>= \case
-        True -> outputStrLn "Undone!"
-        False -> outputStrLn "Cannot undo!"
-      exerciseLoop
-    Just CmdTopExit -> outputStrLn "Bye!"
-    Just (CmdTopSelect hole) -> do
-      tcs <- use $ exerciseProgram . S.programTCState
-      let ii = InteractionId hole
-      (ips, _) <- runTCMEx tcs getInteractionPoints
-      if ii `elem` ips then do
-        outputStrLn $ "Focusing on hole " ++ show ii
-        handle (\Interrupt -> return ()) $ withInterrupt $ holeLoop ii
-      else
-        outputStrLn "A hole with this number does not exist!"
-      exerciseLoop
-    Just CmdTopHelp -> do
-      outputStrLn $ unlines
-        [ "Available commands at the top level:"
-        , "  h          print this help"
-        , "  u          undo last step"
-        , "  s <hole>   select hole with number <hole>"
-        , "  p          print the program"
-        , "  q          quit program"
-        , ""
-        , "Available commands in a hole"
-        , "  l          leave the hole"
-        , "  t          print the type of the hole"
-        , "  c          print the context of the hole"
-        , "  r <def>    refine the hole with definition <def>"
-        , "  s <var>    split variable <var>"
-        ]
-      exerciseLoop
-    Just CmdTopPrint -> do
-      prettyProgram >>= outputStrLn
-      exerciseLoop
+  tcs <- use $ exerciseProgram . S.programTCState
+  (ips, _) <- runTCMEx tcs getInteractionPoints
+  if null ips
+    then outputStrLn "All goals have been solved, congratulations!"
+    else do
+    minput <- getInputLine "% "
+    let cmd = maybe (Just CmdTopExit) (runReadP readPTopCommand) minput
+    catchTCMErr exerciseLoop $ case cmd of
+      Nothing -> do
+        outputStrLn "Unknown command!"
+        exerciseLoop
+      Just CmdTopUndo -> do
+        undo >>= \case
+          True -> outputStrLn "Undone!"
+          False -> outputStrLn "Cannot undo!"
+        exerciseLoop
+      Just CmdTopExit -> outputStrLn "Bye!"
+      Just (CmdTopSelect hole) -> do
+        let ii = InteractionId hole
+        if ii `elem` ips then do
+          outputStrLn $ "Focusing on hole " ++ show ii
+          handle (\Interrupt -> return ()) $ withInterrupt $ holeLoop ii
+          else
+          outputStrLn "A hole with this number does not exist!"
+        exerciseLoop
+      Just CmdTopHelp -> do
+        outputStrLn $ unlines
+          [ "Available commands at the top level:"
+          , "  h          print this help"
+          , "  u          undo last step"
+          , "  s <hole>   select hole with number <hole>"
+          , "  p          print the program"
+          , "  q          quit program"
+          , ""
+          , "Available commands in a hole"
+          , "  l          leave the hole"
+          , "  t          print the type of the hole"
+          , "  c          print the context of the hole"
+          , "  r <def>    refine the hole with definition <def>"
+          , "  s <var>    split variable <var>"
+          ]
+        exerciseLoop
+      Just CmdTopPrint -> do
+        prettyProgram >>= outputStrLn
+        exerciseLoop
 
 catchTCMErr :: MonadException m => InputT m a -> InputT m a -> InputT m a
 catchTCMErr cont act = HaskEx.catch act $ \e -> do
@@ -247,12 +255,83 @@ holeLoop ii = do
       (doc, _) <- runTCMEx tcs $ AU.thingsInScopeWithType ii >>= mapM prettyCtx
       outputStrLn $ render $ vcat doc
       holeLoop ii
-    Just (CmdSplit var) -> do
-      -- TODO: split
+    Just (CmdSplit var) -> splitUser ii var
+    Just (CmdRefine def) -> refineUser ii def
+    Just CmdHoleHint -> do
+      st <- getStrategyFor ii
+      case st of
+        Nothing -> outputStrLn "No hints available!"
+        Just (S.RefineStrategy prf) ->
+          outputStrLn $ "Refine with '" ++ Ps.proofRule prf ++ "'"
+        Just (S.SplitStrategy var _) ->
+          outputStrLn $ "Split variable '" ++ var ++ "'"
       holeLoop ii
-    Just (CmdRefine def) -> do
-      -- TODO: refine
-      holeLoop ii
+
+getStrategyFor :: InteractionId -> ExerciseM (Maybe S.ClauseStrategy)
+getStrategyFor ii = getFirst <$> use (exerciseStrategy . ix (interactionId ii) . to First)
+
+splitUser :: InteractionId -> String -> ExerciseM ()
+splitUser ii var = do
+  prog <- use exerciseProgram
+  -- invoke case splitting functionality
+  ((_, newClauses), _) <- runTCMEx (view S.programTCState prog) $ MC.makeCase ii noRange var
+  let newDecls = AU.replaceClauses ii newClauses (view S.programDecls prog)
+  --
+  updateProgramAndCheck newDecls
+  -- check strategy
+  st <- getStrategyFor ii
+  let notWithStrat msg = outputStrLn msg >> regenerateStrategy
+  case st of
+    Just (S.SplitStrategy sv cs)
+      | sv == var ->
+        exerciseStrategy %= concatReplace (interactionId ii) (map Just cs)
+      | otherwise -> notWithStrat "I chose to split on a different variable here."
+    Just (S.RefineStrategy _) -> notWithStrat "I chose to refine here."
+    Nothing -> notWithStrat "I didn't know what to do here."
+
+refineUser :: InteractionId -> String -> ExerciseM ()
+refineUser ii def = do
+  prog <- use exerciseProgram
+  (expr, _) <- runTCMEx (view S.programTCState prog) $ do
+    -- parse the user input in the given context
+    given <- B.parseExprIn ii noRange def
+    -- try to refine the hole with the user expression
+    B.refine ii Nothing given
+  let newDecls = AU.replaceHole ii expr (view S.programDecls prog)
+  updateProgramAndCheck newDecls
+  -- check strategy
+  st <- getStrategyFor ii
+  -- TODO: do not regenerate strategy if the user actually did what we expected
+  case st of
+    --Just (S.RefineStrategy prf) -> _
+    _ -> regenerateStrategy
+
+updateProgramAndCheck :: [A.Declaration] -> ExerciseM ()
+updateProgramAndCheck newDecls = do
+  tcs <- view exerciseTCState
+  (newDecls', progState) <- runTCMEx tcs $ do
+    -- rebuild interaction points (normally only created when going from concrete -> abstract)
+    (newDecls', _) <- AU.rebuildInteractionPoints newDecls
+    -- check updated AST (might not succeed if the termination checker intervenes)
+    checkDecls newDecls'
+    unfreezeMetas
+    return newDecls'
+  checkpoint
+  exerciseProgram .= S.StatefulProgram newDecls' progState
+
+regenerateStrategy :: ExerciseM ()
+regenerateStrategy = do
+  decls <- use $ exerciseProgram . S.programDecls
+  strat <- view exerciseSession >>= \s -> liftIO $ S.buildStrategy s decls
+  exerciseStrategy .= fromMaybe [] strat
+
+concatReplace :: Int -> [a] -> [a] -> [a]
+concatReplace n repl []
+  | n < 0 = []
+concatReplace n repl (x:xs)
+  | n == 0 = repl ++ xs
+  | n > 0 = x : concatReplace (n - 1) repl xs
+concatReplace _ _ _ = error "concatReplace: invalid arguments"
 
 undo :: ExerciseM Bool
 undo = use exerciseUndo >>= \case
@@ -264,8 +343,8 @@ undo = use exerciseUndo >>= \case
     return True
 
 -- | Adds the current program and TCM state to the undo history.
-recordState :: ExerciseM ()
-recordState = do
+checkpoint :: ExerciseM ()
+checkpoint = do
   step <- (,) <$> use exerciseProgram <*> use exerciseStrategy
   exerciseUndo %= cons step
 
@@ -292,113 +371,6 @@ runTCMEx tcs tcm = do
   -- -- print errors
 {-
 
--- | This is where all the exercise solving should happen
-exerciseSession :: ExerciseM ()
-exerciseSession = do
-  -- REMARK: How a session should be structured:
-  -- 1. given the current state of the program, invoke proof search to generate strategy (See module Strategy)
-  --    (if it is not possible to solve, tell the user so, in order for him to backtrack)
-  -- 2. let the user do stuff
-  --    * if the user follows the strategy, just refine or split and return to 2
-  --    * if the user diverts from the strategy, go to 1, or undo step
-  -- 3. no holes left -> user happy
-
-  -- THIS IS JUST AN INTERACTIVE LOOP ALLOWING TO EITHER REFINE OR SPLIT HOLES, TO SEE WHETHER IT'S ACTUALLY WORKING
-  forever $ do
-    showProgramToUser
-    liftIO $ putStrLn "InteractionID:"
-    ii <- InteractionId <$> liftIO readLn `catchError` \_ -> return (-1)
-    when (ii >= 0) $ do
-      liftIO $ putStrLn "Action:"
-      act <- liftIO $ getLine
-      let wrapAction act = do
-            recordState -- save state for undoing
-            tryIt act
-              (\_ -> do -- success
-                  liftIO $ printf "recorded step\n"
-                  tcmToEx $ getInteractionIdsAndMetas >>= mapM_
-                    (\(ii, mi) -> do
-                        meta <- getMetaInfo <$> lookupMeta mi
-                        liftIO $ printf "Scope for %s:\n" (show ii)
-                        liftIO $ print (clScope meta)
-                        liftIO $ printf "\n\n")
-              )
-              (\e -> do -- failure
-                  str <- tcmToEx $ prettyError e
-                  liftIO $ printf "step did not type check: %s\n" str
-                  void $ undo
-              )
-      case act of
-        ('r':' ':ref) -> wrapAction $ performUserAction ii (UserRefine ref)
-        ('c':' ':var) -> wrapAction $ performUserAction ii (UserSplit var)
-        "u" -> undo >>= liftIO . print
-        "s" -> tcmToEx $ thingsInScopeWithType  ii >>= liftIO . print
-        _ -> liftIO $ putStrLn "try again"
-
--- | Replaces the clause identified by the interaction id of its single RHS hole
--- with the list of new clauses.
-replaceClauses :: InteractionId -> [A.Clause] -> [A.Declaration] -> [A.Declaration]
-replaceClauses ii newClauses prog = map update prog where
-  -- recursively traverses all declarations to replace the clauses
-  update (A.Mutual mi decls) = A.Mutual mi (map update decls)
-  update (A.Section mi mn bnds decls) = A.Section mi mn bnds (map update decls)
-  update (A.FunDef di qn del clauses) = A.FunDef di qn del $ concatMap updateClause clauses
-  update (A.RecDef di qn1 ri flag qn2 bnds e decls) = A.RecDef di qn1 ri flag qn2 bnds e (map update decls)
-  update (A.ScopedDecl si decls) = A.ScopedDecl si (map update decls)
-  update other = other
-
-  updateClause cls = case A.clauseRHS cls of
-    A.RHS e -> case isTopLevelHole e of
-      -- the newly generated meta variables inherit the scope information of the
-      -- variable they are replacing. Since we are operating on abstract syntax,
-      -- which is the stage after scope checking, we need to track scope manually here.
-      -- initScope updates the local variables of the old meta variable's scope
-      Just (mi, hole) | hole == ii -> map (initScope $ metaScope mi) newClauses
-      _ -> [cls]
-    A.WithRHS qn exprs clauses ->
-      let newrhs = A.WithRHS qn exprs (concatMap updateClause clauses)
-      in [cls { A.clauseRHS = newrhs}]
-    _ -> [cls]
-
-  -- checks whether there is a top level hole in the expression of a clause
-  isTopLevelHole (A.QuestionMark mi hole) = Just (mi, hole)
-  isTopLevelHole (A.ScopedExpr _ e)       = isTopLevelHole e
-  isTopLevelHole _                        = Nothing
-
-  initScope scope clause =
-    -- here we need to extract all the bound names in the patterns of the clause and insert
-    -- them into the top level scope
-    let locals = map (\n -> (A.nameConcrete n, LocalVar n)) $ clauseLocals $ A.clauseLHS clause
-        newScope = scope { scopeLocals = locals }
-        -- update scoped things in the expression with the new scope
-        updScope (A.ScopedExpr _ e) = A.ScopedExpr newScope e
-        updScope (A.QuestionMark mi hole) = A.QuestionMark mi { metaScope = newScope } hole
-        updScope o = o
-    in A.mapExpr updScope clause
-
-  -- finds all local variables in a clause
-  -- REMARK: currently only works for patterns, not co-patterns
-  clauseLocals (A.LHS _ (A.LHSHead _ pats) _) = concatMap (patternDecls . namedThing . unArg) pats
-  clauseLocals _ = []
-
-  -- finds all variables bound in patterns, only constructors and variables supported so far
-  -- not sure what else we need, but we'll find out sooner or later
-  patternDecls (A.VarP n) = [n]
-  patternDecls (A.ConP _ _ a) = concatMap (patternDecls . namedThing . unArg) a
-  patternDecls (A.DefP _ _ a) = concatMap (patternDecls . namedThing . unArg) a
-  patternDecls _ = []
-
-
--- | Adds the current program and TCM state to the undo history.
-recordState :: ExerciseM ()
-recordState = do
-  prog <- gets exerciseDecls
-  tc <- saveTCState
-  modify $ \s -> s { exerciseUndo = (prog, tc) : exerciseUndo s }
-
-data UserAction
-  = UserRefine String
-  | UserSplit String
 
 -- | Type checks a new state of the program and update, if successful.
 -- May fail with an exception if any step goes wrong. Restoring state
