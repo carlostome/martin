@@ -1,4 +1,4 @@
-module Map where
+module Vec where
 
 data Nat : Set where
   zero : Nat
@@ -12,3 +12,6 @@ data Vec (A : Set) : Nat -> Set where
 
 map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
 map f xs = {!!}
+
+replicate : forall {A} -> (n : Nat) -> A -> Vec A n
+replicate n x = {!!}

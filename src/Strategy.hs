@@ -94,7 +94,8 @@ proofSearchStrategy prog ii = do
   debug ("proofSearchStrategy " ++ show ii)
   -- First we check whether the meta is in a top level rhs.
   ((goal, hdb),_) <- runTCMSearch (view programTCState prog) $ goalAndRules ii
-  let prfs = iddfs $ cutoff 10 $ P.solve goal hdb
+  debug goal
+  let prfs = iddfs $ cutoff 7 $ P.solve goal hdb
   mplus (RefineStrategy <$> msum (map (trySolution prog ii) prfs))
         (do guard (checkTopLevel ii (view programDecls prog))
             splitStrategy prog ii)
@@ -143,7 +144,7 @@ splitStrategy :: StatefulProgram
               -> InteractionId
               -> Search ClauseStrategy
 splitStrategy prog ii = do
-  let vars = ["xs"]
+  let vars = ["xs","n"]
   msum $ map (splitSingleVarStrategy prog ii) vars
 
 splitSingleVarStrategy :: StatefulProgram -> InteractionId -> String -> Search ClauseStrategy
@@ -169,7 +170,7 @@ runTCMSearch tcs tcm = do
   tce <- view initialTCEnv
   r <- liftIO $ (Right <$> runTCM tce tcs tcm) `E.catch` (\(e :: TCErr) -> return $ Left e)
   case r of
-    Left _ -> mzero
+    Left e -> traceShowM e >> mzero
     Right v  -> return v
 
 runTCMSearchFresh :: TCM a -> Search (a, TCState)
