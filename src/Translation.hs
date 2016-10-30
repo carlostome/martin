@@ -178,3 +178,11 @@ thingsInScopeWithType ii = do
   types <- mapM (B.typeInMeta ii B.Normalised) allExprs
   let stuffWithTypes = zip (map Left locals ++ map Right globals) types
   return stuffWithTypes
+
+varsInScope :: InteractionId -> TCM [A.Name]
+varsInScope ii = do
+  m <- lookupInteractionId ii
+  mi <- lookupMeta m
+  let s = getMetaScope mi
+      locals = map (localVar . snd) $ scopeLocals s
+  return locals
