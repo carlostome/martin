@@ -13,6 +13,7 @@ import           Agda.Interaction.Options
 import qualified Agda.Interaction.Options.Lenses as Lens
 import qualified Agda.Syntax.Abstract            as A
 import qualified Agda.Syntax.Abstract.Views      as A
+import qualified Agda.Syntax.Internal            as I
 import           Agda.Syntax.Common
 import           Agda.Syntax.Info                as I
 import           Agda.Syntax.Position
@@ -32,6 +33,7 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Writer
+import           Control.Concurrent
 import           Data.Generics.Geniplate
 import qualified Data.List                       as List
 import           Debug.Trace
@@ -77,13 +79,15 @@ data SearchEnvironment = SearchEnvironment
   -- ^ the initial state just after loading the Agda primitives.
   -- No user bindings have been checked yet.
   , _initialTCEnv   :: TCEnv
+  -- Constructor depth of a variable for it to be eligible for splitting on
+  , _depthLimit     :: Int
   }
 makeLenses ''SearchEnvironment
 
 type Search = MaybeT (ReaderT SearchEnvironment IO)
 
 debug :: (MonadIO m, Show a) => a -> m ()
-debug str = when True (liftIO (print str))
+debug str = when False (liftIO (print str))
 
 -- | Apply a proof search strategy,
 -- if not possible select a variable and split.
@@ -102,12 +106,45 @@ proofSearchStrategy prog ii = do
 
 -- | Select a variable in the scope of an Interation id
 -- to split.
-selectVarToSplit :: [A.Declaration]
-                 -> (I.MetaInfo, InteractionId)
-                 -> String
-selectVarToSplit prog hole@(mi,ii)=
-  let (x:xs) = map snd $ scopeLocals $ metaScope mi
-  in show (localVar x)
+selectVarsToSplit :: StatefulProgram
+                 -> InteractionId
+                 -> Search [String]
+selectVarsToSplit prog ii = do
+  se <- lift ask
+  (vars, _) <- runTCMSearch (view programTCState prog) (f (_depthLimit se))
+  return vars
+    where 
+      f lim = do
+        m <- lookupInteractionId ii
+        -- Find the clause that contains this goal
+        (_,_,cl) <- MC.findClause m
+            -- From the clause we get all patterns
+        let dBrPats = deBruijnPats cl
+            -- List of all found variables with their constructor depth
+            allVarDepths = concat $ map varLevels dBrPats
+            -- Only tuples whose constructor depth was at most the given limit
+            varDepthsLim = filter (\(n, _) -> n <= lim) allVarDepths
+            -- sorted by constructor depth from lowest to highest
+            sortedVarDepths = List.sort varDepthsLim
+        -- We no longer need the constructor depths at this point
+        return $ map snd sortedVarDepths
+
+
+deBruijnPats :: I.Clause -> [I.DeBruijnPattern]
+deBruijnPats cl = map namedArg $ I.namedClausePats cl
+
+-- 1. Removes the order indice in the DeBruijnPattern.
+-- 2. Finds all variables in the pattern and assigns it a hierarchy level of 0
+-- 3. For every cons that we pass through we increment the hierarchy level
+-- 4. Returns a list of tuple of a variable and its hierarchy level
+varLevels :: I.DeBruijnPattern -> [(Int, String)]
+varLevels dBrPat = varLevel' (fmap snd dBrPat)
+  where
+    varLevel' (I.VarP x)
+      | x /= "_"              = [(0, x)]
+      | otherwise             = []
+    varLevel' (I.ConP _ _ xs) = map (\(n,x) -> (n + 1, x)) $ concat $ map (varLevel' . namedArg) xs
+    varLevel' _               = []
 
 
 -- | Try a Proof to see if it typechecks termination checker.
@@ -139,14 +176,15 @@ replaceHole ii repl = A.mapExpr $ \e -> case e of
                                     | iiq == ii -> repl
                                   other -> other
 
--- | Split a given variable in an InteractionId
+-- | Try splitting on variables given in an InteractionId
 splitStrategy :: StatefulProgram
               -> InteractionId
               -> Search ClauseStrategy
 splitStrategy prog ii = do
-  let vars = ["xs","n"]
+  vars <- selectVarsToSplit prog ii
   msum $ map (splitSingleVarStrategy prog ii) vars
 
+-- | Split a given variable in an InteractionId
 splitSingleVarStrategy :: StatefulProgram -> InteractionId -> String -> Search ClauseStrategy
 splitSingleVarStrategy prog ii var = do
   debug ("splitting on var: " ++ var)
@@ -260,7 +298,8 @@ initSession verbosity path = do
   (tcmState,_) <- runTCM initEnv initState $ initAgda verbosity
   let env = SearchEnvironment
         { _initialTCState = tcmState
-        , _initialTCEnv = initEnv { envCurrentPath = Just path }
+        , _initialTCEnv   = initEnv { envCurrentPath = Just path }
+        , _depthLimit     = 6
         }
   return Session
      { buildStrategy = \decls -> runReaderT (runMaybeT (generateStrategy decls)) env }
