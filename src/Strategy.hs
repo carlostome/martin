@@ -47,7 +47,7 @@ type ExerciseStrategy = [Maybe ClauseStrategy]
 instance Show ClauseStrategy where
   show (SplitStrategy s cl) = unlines
     (("split at " ++ s ++ " and:") :
-     map (("  "++) . show) cl)
+     map (("    "++) . show) cl)
   show (RefineStrategy pr) =
     "refine with: " ++ P.proofToStr pr
 

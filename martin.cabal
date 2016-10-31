@@ -36,6 +36,7 @@ executable martin-exe
   hs-source-dirs:      app
   main-is:             Main.hs
   other-modules:       AgdaInteraction
+                       AgdaStrategy
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , Agda
