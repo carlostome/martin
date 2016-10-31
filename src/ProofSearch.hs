@@ -166,11 +166,11 @@ apply goal r xs = new : rest where
 
 -- | Solves a partial proof given a set of rules.
 solveAcc :: HintDB -> PartialProof -> SearchT Proof
-solveAcc rules (PartialProof [] p) = return $ p [] -- no goals left
+solveAcc _     (PartialProof [] p) = return $ p [] -- no goals left
 solveAcc rules (PartialProof (g : gs) p) =
   StateT $ wrap $ map (instantiateRule >=> step) rules where
   -- wraps all stateful branches in a node
-  wrap xs s = Node $ map (flip runStateT s) xs
+  wrap xs s = Node $ map (`runStateT` s) xs
   -- tries to apply a single rule
   step r = case unify g (ruleConclusion r) of
     -- cannot unify rules conclusion with the goal
@@ -228,75 +228,6 @@ instance MakeCon PsTerm where
 
 instance (p ~ PsTerm, MakeCon r) => MakeCon (p -> r) where
   con' c ts p = con' c (ts ++ [p])
-
--- | The available rules in the following context
---
--- @
---   map : (A -> B) -> Vec A n -> Vec B n
---   map f nil = nil
---   map f (cons x xs) = ?
--- @
---
--- The name of a rule is the name of the definition in Agda, i.e. we have rules named "map", "cons", "nil" etc.
--- For function types, the return type is the conclusion of the rule (i.e. this is what we unify against when we
--- want to construct a value of a given type) and the function arguments become the premises (the new holes that
--- need to be filled).
---
--- Note that type variables are only translated to actual proof search variables if they are introduced by a Pi-type
--- on the way. For example, we have variables in the rules for "map", "cons" and "nil", but not for "f", "x" or "xs",
--- because the variables have already been introduced into the scope. (We can't just unify the "A" and "B" in the
--- type of "f" with anything, because they appear as concrete types inside the function definition.)
---
--- Furthermore, sometimes we need to fill a hole of function type, as it is the case with the "f" argument of map.
--- Therefore, for every function we can also add a rule with the whole type of the function as a conclusion and no
--- premises. That will allow using unapplied functions itself as arguments.
---
--- Note that when pattern matching on the vector argument, we need to introduce some constants representing the length
--- of the tail, called @n'@ in the example below.
--- This should be just a matter of unifying the type of the constructor with the (instantiated) type of the argument.
---
--- TODO: find out how quantified variables are dealt with (I suppose they must be introduced as some fresh constants)
--- TODO: enforce structurally smaller arguments (probably in the search procedure, just ignoring invalid proofs there)
-testRules2 :: HintDB
-testRules2 =
-  [ -- global scope
-    Rule
-    { ruleName = "nil"
-    , ruleConclusion = con "Vec" (var "A") (con "zero")
-    , rulePremises = []
-    }
-  , Rule
-    { ruleName = "cons"
-    , ruleConclusion = con "Vec" (var "A") (con "suc" (var "n"))
-    , rulePremises = [var "A", con "Vec" (var "A") (var "n")]
-    }
-  , Rule
-    { ruleName = "map"
-    , ruleConclusion = con "Vec" (var "B") (var "n")
-    , rulePremises = [ con "->" (var "A") (var "B"), con "Vec" (var "A") (var "n") ]
-    }
-  -- local scope (quantified variables have been introduced)
-  -- note that we can use "f" in two ways, either as a function transforming some A into a B,
-  -- or as a value of type "A -> B"
-  , Rule
-    { ruleName = "f"
-    , ruleConclusion = con "B"
-    , rulePremises = [con "A"]
-    }
-  , Rule "f" (con "->" (con "A") (con "B")) []
-  , Rule "x" (con "A") []
-  , Rule "xs" (con "Vec" (con "A") (con "n'")) []
-  ]
-
--- | The goal corresponding to the above example, in the second clause of the map function.
--- We need to find a value of type @Vec B n'@ where @suc n' == n@.
-testGoal2 :: PsTerm
-testGoal2 = con "Vec" (con "B") (con "suc" (con "n'"))
-
--- | this generates @cons (f x) (map f xs))@ and @(map f (cons x xs))@ for the aforementioned map function,
--- the former is is correct, the latter is not making a structurally smaller call, but the algorithm itself
--- seems to work
-itWorks = dfs $ cutoff 10 $ solve testGoal2 testRules2
 
 ppProof :: Proof -> String
 ppProof (Proof r [] g)   = "(" ++ r ++ " : " ++ show g ++ ")"

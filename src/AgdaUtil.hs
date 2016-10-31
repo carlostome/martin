@@ -28,35 +28,20 @@ import qualified Agda.Syntax.Abstract.Views      as A
 import           Agda.Syntax.Common
 import qualified Agda.Syntax.Concrete            as C
 import           Agda.Syntax.Info                as I
-import qualified Agda.Syntax.Internal            as I
 import           Agda.Syntax.Parser
 import           Agda.Syntax.Position
 import           Agda.Syntax.Scope.Base
-import           Agda.TheTypeChecker
 import           Agda.TypeChecking.Monad
 import           Agda.Utils.FileName
 import           Agda.Utils.Monad                hiding (ifM)
 import qualified Agda.Utils.Trie                 as Trie
 
 import           Control.Arrow                   ((&&&))
-import           Control.Concurrent
-import qualified Control.Exception               as E
-import           Control.Lens
-import           Control.Monad
 import           Control.Monad.Except
-import           Control.Monad.Reader
 import           Control.Monad.State.Strict
-import           Control.Monad.Trans.Maybe
 import           Control.Monad.Writer
-import           Data.Generics.Geniplate
-import qualified Data.List                       as List
 import qualified Data.Set                        as Set
-import           Debug.Trace
 import           System.FilePath                 ((</>))
-
-import qualified MakeCaseModified                as MC
-import qualified ProofSearch                     as P
-import           SearchTree
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
@@ -169,7 +154,7 @@ replaceClauses ii newClauses = map update where
 
   -- finds all local variables in a clause
   -- REMARK: currently only works for patterns, not co-patterns
-  clauseLocals (A.LHS _ (A.LHSHead _ pats) _) = concatMap (patternDecls . namedThing . unArg) pats
+  clauseLocals (A.LHS _ (A.LHSHead _ pats) wpats) = concatMap (patternDecls . namedThing . unArg) pats ++ concatMap patternDecls wpats
   clauseLocals _ = []
 
   -- finds all variables bound in patterns, only constructors and variables supported so far

@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
@@ -36,7 +37,6 @@ import qualified AgdaUtil                                   as AU
 import qualified MakeCaseModified                           as MC
 import qualified ProofSearch                                as Ps
 import qualified Strategy                                   as S
-import qualified Translation                                as T
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
