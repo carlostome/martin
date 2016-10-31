@@ -27,6 +27,7 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Writer
 import qualified Data.List                                  as List
+import qualified Data.Map.Strict                            as Map
 import           Data.Maybe
 import           Data.Validation
 import           Text.Printf
@@ -267,16 +268,25 @@ initExercise verbosity agdaFile = do
     $ local (\e -> e { envCurrentPath = Just absPath })
     $ flip catchError (prettyError >=> return . Left ) $ Right <$> do
     -- load Level primitives and setup TCM state
-    initialState <- AU.initAgda verbosity -- the number is the verbosity level, useful for debugging
-    -- REMARK: initialState should now contain a snapshot of an initialized Agda session and can be used to quickly
-    -- revert when we need to recheck the exercise code.
+    _ <- AU.initAgda verbosity
     -- convert exercise to abstract syntax
     abstractDecls <- toAbstract module'
+    checkState <- get
+    -- reset interaction points
+    getInteractionPoints >>= mapM_ (modifyInteractionPoints . Map.delete)
+    stFreshInteractionId .= InteractionId 0
+
+    -- extract scoped state (with imports checked)
+    scopeState <- get
+    -- REMARK: initialState should now contain a snapshot of an initialized Agda session
+    -- and the interfaces of imported modules.
+    -- it can be used to quickly revert when we need to recheck the exercise code.
+    put checkState
     -- check that the exercise is valid to begin with
     checkDecls abstractDecls
     unfreezeMetas
 
-    return (initialState, abstractDecls)
+    return (scopeState, abstractDecls)
   case ret of
     Left err -> return . Left $ "Exercise session failed with\n%s\n" ++ err
     Right (initialState, decls) -> do

@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
@@ -19,32 +20,38 @@ module Martin.Agda.Util
   , varsInScope
   -- * Managing Agda state
   , initAgda
+  , importAllAbstract
   ) where
 
-import qualified Agda.Interaction.BasicOps       as B
+import qualified Agda.Interaction.BasicOps                  as B
 import           Agda.Interaction.FindFile
 import           Agda.Interaction.Imports
 import           Agda.Interaction.Options
-import qualified Agda.Interaction.Options.Lenses as Lens
-import qualified Agda.Syntax.Abstract            as A
-import qualified Agda.Syntax.Abstract.Views      as A
+import qualified Agda.Interaction.Options.Lenses            as Lens
+import qualified Agda.Syntax.Abstract                       as A
+import qualified Agda.Syntax.Abstract.Views                 as A
 import           Agda.Syntax.Common
-import qualified Agda.Syntax.Concrete            as C
-import           Agda.Syntax.Info                as I
+import qualified Agda.Syntax.Concrete                       as C
+import           Agda.Syntax.Info                           as I
 import           Agda.Syntax.Parser
 import           Agda.Syntax.Position
 import           Agda.Syntax.Scope.Base
+import           Agda.Syntax.Scope.Monad                    as Scope
+import           Agda.Syntax.Translation.AbstractToConcrete
+import           Agda.Syntax.Translation.ConcreteToAbstract
 import           Agda.TypeChecking.Monad
 import           Agda.Utils.FileName
-import           Agda.Utils.Monad                hiding (ifM)
-import qualified Agda.Utils.Trie                 as Trie
+import           Agda.Utils.Monad                           hiding (ifM)
+import qualified Agda.Utils.Trie                            as Trie
 
-import           Control.Arrow                   ((&&&))
+import           Control.Arrow                              ((&&&))
 import           Control.Monad.Except
 import           Control.Monad.State.Strict
 import           Control.Monad.Writer
-import qualified Data.Set                        as Set
-import           System.FilePath                 ((</>))
+import           Data.Generics.Geniplate
+import qualified Data.Map.Strict                            as Map
+import qualified Data.Set                                   as Set
+import           System.FilePath                            ((</>))
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
@@ -208,3 +215,36 @@ varsInScope ii = do
   let s = getMetaScope mi
       locals = map (localVar . snd) $ scopeLocals s
   return locals
+
+-- | Imports a module from an abstract syntax tree.
+importModuleAbstract :: I.ModuleInfo -> C.QName -> TCM ()
+importModuleAbstract minfo x = setCurrentRange (getRange minfo) $ do
+  let dir  = maybe defaultImportDir id $ minfoDirective minfo
+      r    = getRange minfo
+  -- First scope check the imported module and return its name and
+  -- interface. This is done with that module as the top-level module.
+  -- This is quite subtle. We rely on the fact that when setting the
+  -- top-level module and generating a fresh module name, the generated
+  -- name will be exactly the same as the name generated when checking
+  -- the imported module.
+  (m, i) <- Scope.withCurrentModule A.noModuleName $ withTopLevelModule x $ do
+    m <- toAbstract $ NewModuleQName x
+    (m, i) <- scopeCheckImport m
+    -- We don't want the top scope of the imported module (things happening
+    -- before the module declaration)
+    return (m, Map.delete A.noModuleName i)
+
+  -- Merge the imported scopes with the current scopes
+  modifyScopes $ \ ms -> Map.unionWith mergeScope (Map.delete m ms) i
+
+  -- Bind the desired module name to the right abstract name.
+  bindQModule PrivateAccess x m
+
+  openModule_ x dir
+  return ()
+
+importAllAbstract :: [A.Declaration] -> TCM ()
+importAllAbstract decls = forM_ (concatMap universeBi decls) go where
+  go (A.Import minfo x _) = abstractToConcrete_ x >>= importModuleAbstract minfo
+  go other = pure ()
+

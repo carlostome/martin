@@ -21,6 +21,7 @@ import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import           Data.Generics.Geniplate
 import qualified Data.List                    as List
@@ -198,7 +199,9 @@ runTCMSearch tcs tcm = do
   tce <- view initialTCEnv
   r <- liftIO $ (Right <$> runTCM tce tcs tcm) `E.catch` (\(e :: TCErr) -> return $ Left e)
   case r of
-    Left _  -> mzero
+    Left e  -> do
+      debugPrint e
+      mzero
     Right v -> return v
 
 runTCMSearchFresh :: TCM a -> Search (a, TCState)
@@ -208,15 +211,19 @@ runTCMSearchFresh tcm = view initialTCState >>= flip runTCMSearch tcm
 -- This is the top level function.
 generateStrategy :: [A.Declaration] -> Search ExerciseStrategy
 generateStrategy prog = do
-  (newDecls, tcs') <- runTCMSearchFresh $ do
+  ((newDecls, impState), tcs') <- runTCMSearchFresh $ do
+    AU.importAllAbstract prog
+    imported <- get -- get a snapshot of the state after importing our stuff
     (newDecl,_) <- AU.rebuildInteractionPoints prog
     checkDecls newDecl
     unfreezeMetas
-    return newDecl
+    return (newDecl, imported)
   let metas = [ ii | A.QuestionMark _ ii <- concatMap universeBi newDecls]
       sprog = StatefulProgram newDecls tcs'
   debugPrint ("Generate strategy for metas: " ++ show metas)
-  mapM (lift . runMaybeT . proofSearchStrategy sprog) metas
+  -- use the import snapshot as the new original state
+  local (initialTCState .~ impState) $
+    mapM (lift . runMaybeT . proofSearchStrategy sprog) metas
 
 data Session = Session
   { buildStrategy :: [A.Declaration] -> IO (Maybe ExerciseStrategy) }
@@ -229,7 +236,7 @@ initSession verbosity path = do
         , _initialTCEnv    = initEnv { envCurrentPath = Just path }
         , _splitDepthLimit = 4
         , _proofDepthLimit = 7
-        , _debugMode       = False
+        , _debugMode       = True
         }
   return Session
      { buildStrategy = \decls -> runReaderT (runMaybeT $ generateStrategy decls) env }

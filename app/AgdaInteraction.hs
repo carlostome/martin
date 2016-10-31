@@ -10,24 +10,19 @@ module AgdaInteraction where
 
 import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
-import           Agda.Syntax.Abstract.Pretty
+import qualified Agda.Syntax.Abstract.Pretty                as A
 import           Agda.Syntax.Common
-import           Agda.Syntax.Position
 import           Agda.Syntax.Translation.ConcreteToAbstract
 import           Agda.TheTypeChecker
 import           Agda.TypeChecking.Errors
 import           Agda.TypeChecking.Monad
-import           Agda.Utils.FileName
 import           Agda.Utils.Pretty
 
 import           Control.Lens
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
-import           Control.Monad.Writer
-import qualified Data.List                                  as List
-import           Data.Maybe
-import           Data.Validation
+import qualified Data.Map.Strict                            as Map
 import           System.Console.Haskeline
 import qualified System.Console.Haskeline                   as HaskEx
 import qualified Text.ParserCombinators.ReadP               as ReadP
@@ -35,10 +30,7 @@ import qualified Text.ParserCombinators.ReadPrec            as ReadPrec
 import           Text.Printf
 import           Text.Read                                  (readPrec)
 
-import qualified Martin.Agda.MakeCaseModified               as MC
-import qualified Martin.Agda.Translation                    as T
 import qualified Martin.Agda.Util                           as AU
-import qualified Martin.Auto.ProofSearch                    as Ps
 import           Martin.Interaction
 import qualified Martin.Strategy                            as S
 
@@ -52,44 +44,14 @@ type ExerciseM = InputT (ReaderT ExerciseEnv (StateT ExerciseState IO))
 -- This should be the main entry point for everything having to do with Agda.
 runInteractiveSession :: Int -> FilePath -> IO ()
 runInteractiveSession verbosity agdaFile = do
-  -- load the Agda file
-  (absPath, module') <- AU.parseAgdaFile agdaFile
-  (ret, progState) <- runTCM initEnv initState
-    $ local (\e -> e { envCurrentPath = Just absPath })
-    $ flip catchError (prettyError >=> return . Left ) $ Right <$> do
-    -- load Level primitives and setup TCM state
-    initialState <- AU.initAgda verbosity -- the number is the verbosity level, useful for debugging
-    -- REMARK: initialState should now contain a snapshot of an initialized Agda session and can be used to quickly
-    -- revert when we need to recheck the exercise code.
-    -- convert exercise to abstract syntax
-    abstractDecls <- toAbstract module'
-    -- check that the exercise is valid to begin with
-    checkDecls abstractDecls
-    unfreezeMetas
+  ret <- initExercise verbosity agdaFile
 
-    return (initialState, abstractDecls)
   case ret of
     Left err -> printf "Exercise session failed with\n%s\n" err
-    Right (initialState, decls) -> do
-      session <- S.initSession verbosity absPath
-      Just str <- S.buildStrategy session decls
-
-      let exEnv = ExerciseEnv
-            { _exerciseFile = absPath
-            , _exerciseTCState = initialState
-            , _exerciseTCEnv = initEnv { envCurrentPath = Just absPath }
-            , _exerciseSession = session
-            }
-          exState = ExerciseState
-            { _exerciseProgram = S.StatefulProgram decls progState
-            , _exerciseStrategy = str
-            , _exerciseUndo = []
-            , _exerciseHintLevel = 0
-            }
-
+    Right (exEnv, exState) -> do
       putStrLn $ unlines
         [ "Welcome to Martin - the interactive Agda tutor"
-        , "You have loaded exercise " ++ show absPath
+        , "You have loaded exercise " ++ show (view exerciseFile exEnv)
         , "Type `h` to get help!"
         , ""
         ]
@@ -218,14 +180,14 @@ holeLoop ii = do
     Just CmdHoleLeave -> return ()
     Just CmdHoleType -> do
       tcs <- use $ exerciseProgram . S.programTCState
-      (doc, _) <- runTCMEx tcs $ B.typeOfMeta B.Normalised ii >>= \(B.OfType _ ty) -> prettyA ty
+      (doc, _) <- runTCMEx tcs $ B.typeOfMeta B.Normalised ii >>= \(B.OfType _ ty) -> A.prettyA ty
       outputStrLn $ render doc
       holeLoop ii
     Just CmdHoleContext -> do
       tcs <- use $ exerciseProgram . S.programTCState
       let prettyCtx (name, ty) = do
             let pname = pretty $ either id A.qnameName name
-            pty <- prettyA ty
+            pty <- A.prettyA ty
             return $ pname <+> char ':' <+> pty
       (doc, _) <- runTCMEx tcs $ AU.thingsInScopeWithType ii >>= mapM prettyCtx
       outputStrLn $ render $ vcat doc
