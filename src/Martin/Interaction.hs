@@ -255,3 +255,44 @@ runTCMEx :: (MonadReader ExerciseEnv m, MonadIO m) => TCState -> TCM a -> m (a, 
 runTCMEx tcs tcm = do
   env <- view exerciseTCEnv
   liftIO $ runTCM env tcs $ tcm `catchError` (prettyError >=> liftIO . throwIO . PrettyTCErr)
+
+runExerciseM :: ExerciseEnv -> ExerciseState -> (ReaderT ExerciseEnv (StateT ExerciseState IO) a) -> IO (a,ExerciseState)
+runExerciseM exEnv exState m = runStateT (runReaderT m exEnv) exState
+
+initExercise :: Int -> FilePath -> IO (Either String (ExerciseEnv, ExerciseState))
+initExercise verbosity agdaFile = do
+  -- load the Agda file-
+  (absPath, module') <- AU.parseAgdaFile agdaFile
+  (ret, progState) <- runTCM initEnv initState
+    $ local (\e -> e { envCurrentPath = Just absPath })
+    $ flip catchError (prettyError >=> return . Left ) $ Right <$> do
+    -- load Level primitives and setup TCM state
+    initialState <- AU.initAgda verbosity -- the number is the verbosity level, useful for debugging
+    -- REMARK: initialState should now contain a snapshot of an initialized Agda session and can be used to quickly
+    -- revert when we need to recheck the exercise code.
+    -- convert exercise to abstract syntax
+    abstractDecls <- toAbstract module'
+    -- check that the exercise is valid to begin with
+    checkDecls abstractDecls
+    unfreezeMetas
+
+    return (initialState, abstractDecls)
+  case ret of
+    Left err -> return . Left $ "Exercise session failed with\n%s\n" ++ err
+    Right (initialState, decls) -> do
+      session <- S.initSession verbosity absPath
+      Just str <- S.buildStrategy session decls
+
+      let exEnv = ExerciseEnv
+            { _exerciseFile = absPath
+            , _exerciseTCState = initialState
+            , _exerciseTCEnv = initEnv { envCurrentPath = Just absPath }
+            , _exerciseSession = session
+            }
+          exState = ExerciseState
+            { _exerciseProgram = S.StatefulProgram decls progState
+            , _exerciseStrategy = str
+            , _exerciseUndo = []
+            , _exerciseHintLevel = 0
+            }
+      return $ Right (exEnv, exState)

@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TemplateHaskell  #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import qualified AgdaInteraction     as AI
@@ -9,6 +11,28 @@ import           Data.Monoid
 import qualified Options.Applicative as OA
 import           System.IO
 import           Text.Printf
+
+import Data.Monoid
+import Control.Lens
+
+import qualified Graphics.Vty as V
+
+import qualified Brick.Main as M
+import qualified Brick.Types as T
+import Brick.Widgets.Core
+  ( (<+>)
+  , (<=>)
+  , hLimit
+  , vLimit
+  , str
+  , padTop
+  , padBottom
+  )
+import qualified Brick.Widgets.Center as C
+import qualified Brick.Widgets.Edit as E
+import qualified Brick.AttrMap as A
+import qualified Brick.Focus as F
+import Brick.Util (on)
 
 
 data MartinOpt = MartinOpt
@@ -47,17 +71,122 @@ progOptionParser = MartinOpt
         (OA.metavar "FILE" <>
          OA.help "Path of the Agda file containing the exercise" )
 
+-- main :: IO ()
+-- main = do
+--   options <- OA.execParser opts
+--   let file = view agdaFile options
+--   if view onlyPrint options
+--      then AS.runStrategyGenerator 0 file
+--      else AI.runInteractiveSession 0 file
+
+--   where
+--     opts = OA.info (OA.helper <*> progOptionParser)
+--       ( OA.fullDesc
+--       <> OA.progDesc "Run the tutor on the Agda exercise in FILE"
+--       <> OA.header "martin - an interactive Agda tutor"
+--       )
+
+--------------------------------------------------------------------------------
+
+data Name = Edit
+          deriving (Ord, Show, Eq)
+
+data St =
+    St {
+         _edit :: E.Editor String Name
+       , _currentWindow :: Window
+       , _exerciseState :: ExerciseState
+       , _exerciseEnv   :: ExerciseEnv
+       }
+
+data Window = HelpW | MainW
+
+makeLenses ''St
+
+drawUI :: St -> [T.Widget Name]
+drawUI st = [ui]
+    where
+      e1 = F.withFocusRing (F.focusRing [Edit]) E.renderEditor (st^.edit)
+
+      ui =
+        case st^.currentWindow of
+          HelpW   -> (C.center $ str help) <=>
+                     str " " <=>
+                     str "Esc to go back."
+          MainW -> (padBottom T.Max $ str "Prog text") <=>
+                     (vLimit 1 $ padTop T.Max e1) <=>
+                     str " " <=>
+                     str "Esc to quit. h to go to the help page."
+
+appEvent :: St -> V.Event -> T.EventM Name (T.Next St)
+appEvent st ev =
+    case ev of
+        V.EvKey V.KEsc [] -> 
+          case st^.currentWindow of
+            HelpW -> M.continue =<< T.handleEventLensed st currentWindow (\_ _ -> return MainW) ev
+            MainW -> M.halt st
+        V.EvKey (V.KChar 'h') [] ->
+          M.continue =<< T.handleEventLensed st currentWindow (\_ _ -> return HelpW) ev
+
+        V.EvKey (V.KChar 'u') [] ->
+          M.continue =<< T.handleEventLensed st currentWindow (\_ _ -> return HelpW) ev
+
+        _ -> M.continue =<< case F.focusGetCurrent (F.focusRing [Edit]) of
+               Just Edit -> T.handleEventLensed st edit E.handleEditorEvent ev
+               Nothing -> return st
+appEvent st _ = M.continue st
+
+-- | The commands a user can perform at the top level interaction loop.
+data TopCommand
+  = CmdTopUndo       -- ^ undo the last split or refine action
+  | CmdTopSelect Int -- ^ focus on a hole
+  | CmdTopExit       -- ^ exit the program
+  | CmdTopHelp       -- ^ print help message
+  | CmdTopPrint      -- ^ print the program
+  deriving (Eq, Ord, Show, Read)
+
+help = unlines
+          [ "Available commands at the top level:"
+          , "  h          print this help"
+          , "  u          undo last step"
+          , "  s <hole>   select hole with number <hole>"
+          , "  p          print the program"
+          , "  q          quit program"
+          , ""
+          , "Available commands in a hole"
+          , "  l          leave the hole"
+          , "  t          print the type of the hole"
+          , "  c          print the context of the hole"
+          , "  r <def>    refine the hole with definition <def>"
+          , "  s <var>    split variable <var>"
+          ]
+
+initialState :: St
+initialState =
+    St (E.editor Edit (str . unlines) Nothing "")
+       MainW
+
+theMap :: A.AttrMap
+theMap = A.attrMap V.defAttr
+    [ (E.editAttr,                   V.white `on` V.blue)
+    , (E.editFocusedAttr,            V.black `on` V.yellow)
+    ]
+
+appCursor :: St -> [T.CursorLocation Name] -> Maybe (T.CursorLocation Name)
+appCursor _ _ = Nothing
+
+theApp :: M.App St V.Event Name
+theApp =
+  M.App { M.appDraw          = drawUI
+        , M.appChooseCursor  = appCursor
+        , M.appHandleEvent   = appEvent
+        , M.appStartEvent    = return
+        , M.appAttrMap       = const theMap
+        , M.appLiftVtyEvent  = id
+        }
+
 main :: IO ()
 main = do
-  options <- OA.execParser opts
-  let file = view agdaFile options
-  if view onlyPrint options
-     then AS.runStrategyGenerator 0 file
-     else AI.runInteractiveSession 0 file
-
-  where
-    opts = OA.info (OA.helper <*> progOptionParser)
-      ( OA.fullDesc
-      <> OA.progDesc "Run the tutor on the Agda exercise in FILE"
-      <> OA.header "martin - an interactive Agda tutor"
-      )
+    st <- M.defaultMain theApp initialState
+    putStrLn "In input 1 you entered:\n"
+    putStrLn $ unlines $ E.getEditContents $ st^.edit
