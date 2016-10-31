@@ -290,7 +290,8 @@ holeLoop ii = do
 
 -- | Computes a hint for the given hole with the desired level of detail.
 -- Currently, 0 means the least amount of detail and 2 is the highest.
-giveHint :: InteractionId -> Int -> ExerciseM Feedback
+giveHint :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+         => InteractionId -> Int -> m Feedback
 giveHint ii hintLevel = do
   st <- getStrategyFor ii
   tcs <- use $ exerciseProgram . S.programTCState
@@ -314,11 +315,13 @@ giveHint ii hintLevel = do
 
 
 -- | Retrieves the strategy for the given hole from the state.
-getStrategyFor :: InteractionId -> ExerciseM (Maybe S.ClauseStrategy)
+getStrategyFor :: (MonadState ExerciseState m)
+               => InteractionId -> m (Maybe S.ClauseStrategy)
 getStrategyFor ii = getFirst <$> use (exerciseStrategy . ix (interactionId ii) . to First)
 
 -- | Executes a split action.
-splitUser :: InteractionId -> String -> ExerciseM Feedback
+splitUser :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+          => InteractionId -> String -> m Feedback
 splitUser ii var = do
   prog <- use exerciseProgram
   -- invoke case splitting functionality
@@ -342,7 +345,8 @@ splitUser ii var = do
       "I cannot guarantee you can solve the exercise that way, though it might still be possible."
 
 -- | Executes a refinement action.
-refineUser :: InteractionId -> String -> ExerciseM Feedback
+refineUser :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+           => InteractionId -> String -> m Feedback
 refineUser ii def = do
   prog <- use exerciseProgram
   (expr, _) <- runTCMEx (view S.programTCState prog) $ do
@@ -384,14 +388,16 @@ stripPrefixFromProof = go where
     | fname /= Ps.proofRule prf =
         AccFailure $ makeFeedback $ printf "You used '%s' where I used '%s'." fname (Ps.proofRule prf)
     | length args /= length (Ps.proofArgs prf) =
-        AccFailure $ makeFeedback $ printf "You applied '%s' too a different number of arguments (%d) than I did (%d)."
-          fname (length args) (length $ Ps.proofArgs prf)
+        AccFailure $ makeFeedback
+        $ printf "You applied '%s' too a different number of arguments (%d) than I did (%d)."
+            fname (length args) (length $ Ps.proofArgs prf)
     | otherwise = concat <$> zipWithM go args (Ps.proofArgs prf)
 
 -- | Type checks a program and updates the current program state
 -- with the new program and TCState if successful.
 -- The previous state is recorded in the undo-history.
-checkProgramAndUpdate :: [A.Declaration] -> ExerciseM ()
+checkProgramAndUpdate :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+                      => [A.Declaration] -> m ()
 checkProgramAndUpdate newDecls = do
   tcs <- view exerciseTCState
   (newDecls', progState) <- runTCMEx tcs $ do
@@ -405,7 +411,7 @@ checkProgramAndUpdate newDecls = do
   exerciseProgram .= S.StatefulProgram newDecls' progState
 
 -- | Regenerates the strategy for the current program state.
-regenerateStrategy :: ExerciseM ()
+regenerateStrategy :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m) => m ()
 regenerateStrategy = do
   decls <- use $ exerciseProgram . S.programDecls
   strat <- view exerciseSession >>= \s -> liftIO $ S.buildStrategy s decls
@@ -421,7 +427,7 @@ concatReplace n repl (x:xs)
 concatReplace _ _ _ = error "concatReplace: invalid arguments"
 
 -- | Reverts the program and strategy state to the previous undo-checkpoint.
-undo :: ExerciseM Bool
+undo :: MonadState ExerciseState m => m Bool
 undo = use exerciseUndo >>= \case
   [] -> return False
   (prog,strat):rest -> do
@@ -431,7 +437,7 @@ undo = use exerciseUndo >>= \case
     return True
 
 -- | Adds the current program and TCM state to the undo history.
-checkpoint :: ExerciseM ()
+checkpoint :: MonadState ExerciseState m => m ()
 checkpoint = do
   step <- (,) <$> use exerciseProgram <*> use exerciseStrategy
   exerciseUndo %= cons step
@@ -439,7 +445,8 @@ checkpoint = do
 -- | Displays the current state of the program to the user.
 -- It also shows the numbers (InteractionId) of each hole. Based on that, the user can then
 -- choose to perform an action on a given hole.
-prettyProgram :: ExerciseM String
+prettyProgram :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+              => m String
 prettyProgram = do
   prog <- use exerciseProgram
   fmap fst $ runTCMEx (view S.programTCState prog) $ do
@@ -449,7 +456,7 @@ prettyProgram = do
 -- | Runs a TCM computation inside the exercise monad.
 -- All TCErr exceptions are converted to PrettyTCErr exceptions before
 -- being rethrown outside of the TCM monad.
-runTCMEx :: TCState -> TCM a -> ExerciseM (a, TCState)
+runTCMEx :: (MonadReader ExerciseEnv m, MonadIO m) => TCState -> TCM a -> m (a, TCState)
 runTCMEx tcs tcm = do
   env <- view exerciseTCEnv
   liftIO $ runTCM env tcs $ tcm `catchError` (prettyError >=> HaskEx.throwIO . PrettyTCErr)
