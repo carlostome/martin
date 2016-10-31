@@ -1,16 +1,23 @@
+{-# LANGUAGE LambdaCase #-}
 {-| This module contains the functionality to translate Agda terms to proof search terms.
 -}
 module Translation
   ( goalAndRules
   , generateHints
   , generateGoal
+  , flattenVisibleApp
+  , literalToConstructor
+  , constructorFormA
+  , qNameS
   ) where
 
 import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
+import qualified Agda.Syntax.Abstract.Views                 as A
 import           Agda.Syntax.Common
 import           Agda.Syntax.Info
 import qualified Agda.Syntax.Internal                       as I
+import           Agda.Syntax.Literal
 import           Agda.Syntax.Translation.InternalToAbstract
 import           Agda.TypeChecking.Monad
 import           Agda.TypeChecking.Monad.Builtin
@@ -135,7 +142,7 @@ typeToPsTerms cv scope other = case flattenVisibleApp other of
   (A.Con con : args) -> fromDefOrCon cv scope (qNameS $ head $ A.unAmbQ con) args
   -- translate literal naturals
   (A.Lit lit : _) -> do
-    con <- MaybeT $ fmap Just (constructorForm (I.Lit lit) >>= reify) `catchError` \_ -> return Nothing
+    con <- MaybeT $ literalToConstructor lit
     typeToPsTerms cv scope con
   -- set expressions
   (A.Set _ lvl : _) -> return [Ps.con "Set" (Ps.con $ show lvl)]
@@ -171,3 +178,14 @@ piTypeToPsTerms cv scope ((argName, h, argTy):args) ret = case h of
 qNameS :: A.QName -> String
 qNameS (A.QName _ n) = show $ A.nameConcrete n
 
+-- | Converts a literal to an expression consisting of the corresponding constructors.
+literalToConstructor :: Literal -> TCM (Maybe A.Expr)
+literalToConstructor lit = fmap Just (constructorForm (I.Lit lit) >>= reify) `catchError` \_ -> return Nothing
+
+-- | Converts all literals in an expression to their corresponding constructors.
+constructorFormA :: A.ExprLike e => e -> TCM e
+constructorFormA = A.traverseExpr $ \case
+  A.Lit lit -> literalToConstructor lit >>= \case
+    Nothing -> pure $ A.Lit lit
+    Just c -> pure c
+  other -> pure other

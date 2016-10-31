@@ -25,7 +25,9 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Writer
+import qualified Data.List                                  as List
 import           Data.Maybe
+import           Data.Validation
 import           System.Console.Haskeline
 import qualified System.Console.Haskeline                   as HaskEx
 import qualified Text.ParserCombinators.ReadP               as ReadP
@@ -37,6 +39,7 @@ import qualified AgdaUtil                                   as AU
 import qualified MakeCaseModified                           as MC
 import qualified ProofSearch                                as Ps
 import qualified Strategy                                   as S
+import qualified Translation                                as T
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
 -- INVARIANT: this state needs to be kept in sync with the TCM state.
@@ -44,12 +47,14 @@ import qualified Strategy                                   as S
 -- when the changes have been type checked and the TCM state has been populated with
 -- the declarations.
 data ExerciseState = ExerciseState
-  { _exerciseProgram  :: S.StatefulProgram
+  { _exerciseProgram   :: S.StatefulProgram
   -- ^ the current state of the program
-  , _exerciseStrategy :: S.ExerciseStrategy
+  , _exerciseStrategy  :: S.ExerciseStrategy
   -- ^ the strategy for solving the current program
-  , _exerciseUndo     :: [(S.StatefulProgram, S.ExerciseStrategy)]
+  , _exerciseUndo      :: [(S.StatefulProgram, S.ExerciseStrategy)]
   -- ^ a history of program states
+  , _exerciseHintLevel :: Int
+  -- ^ the current level of detail for hints
   }
 
 makeLenses ''ExerciseState
@@ -115,6 +120,7 @@ runInteractiveSession verbosity agdaFile = do
             { _exerciseProgram = S.StatefulProgram decls progState
             , _exerciseStrategy = str
             , _exerciseUndo = []
+            , _exerciseHintLevel = 0
             }
 
       putStrLn $ unlines
@@ -129,6 +135,15 @@ runInteractiveSession verbosity agdaFile = do
             outputStrLn ""
             exerciseLoop
       void $ runStateT (runReaderT (runInputT defaultSettings go) exEnv) exState
+
+-- | Feedback given to user interaction.
+type Feedback = [String]
+
+makeFeedback :: String -> Feedback
+makeFeedback = return
+
+noFeedback :: Feedback
+noFeedback = []
 
 -- | The commands a user can perform at the top level interaction loop.
 data TopCommand
@@ -196,6 +211,7 @@ exerciseLoop = do
         undo >>= \case
           True -> outputStrLn "Undone!"
           False -> outputStrLn "Cannot undo!"
+        exerciseHintLevel .= 0
         exerciseLoop
       Just CmdTopExit -> outputStrLn "Bye!"
       Just (CmdTopSelect hole) -> do
@@ -259,24 +275,50 @@ holeLoop ii = do
       (doc, _) <- runTCMEx tcs $ AU.thingsInScopeWithType ii >>= mapM prettyCtx
       outputStrLn $ render $ vcat doc
       holeLoop ii
-    Just (CmdSplit var) -> splitUser ii var
-    Just (CmdRefine def) -> refineUser ii def
+    Just (CmdSplit var) -> do
+      splitUser ii var >>= mapM_ outputStrLn
+      exerciseHintLevel .= 0
+    Just (CmdRefine def) -> do
+      refineUser ii def >>= mapM_ outputStrLn
+      exerciseHintLevel .= 0
     Just CmdHoleHint -> do
-      st <- getStrategyFor ii
-      case st of
-        Nothing -> outputStrLn "No hints available!"
-        Just (S.RefineStrategy prf) ->
-          outputStrLn $ "Refine with '" ++ Ps.proofRule prf ++ "'"
-        Just (S.SplitStrategy var _) ->
-          outputStrLn $ "Split variable '" ++ var ++ "'"
+      hint <- use exerciseHintLevel >>= giveHint ii
+      exerciseHintLevel += 1
+      mapM_ outputStrLn hint
       holeLoop ii
+
+
+-- | Computes a hint for the given hole with the desired level of detail.
+-- Currently, 0 means the least amount of detail and 2 is the highest.
+giveHint :: InteractionId -> Int -> ExerciseM Feedback
+giveHint ii hintLevel = do
+  st <- getStrategyFor ii
+  tcs <- use $ exerciseProgram . S.programTCState
+  return <$> case st of
+    Nothing -> return "No hints available!"
+    Just (S.RefineStrategy prf)
+      | hintLevel == 0 -> return "Refine."
+      | hintLevel == 1 -> do
+          ((goal,hdb),_) <- runTCMEx tcs $ T.goalAndRules ii
+          let candidates = map Ps.ruleName $ filter (Ps.canUnify goal . Ps.ruleConclusion) hdb
+          return $ "Refine with a variable or a function returning the right type:\n"
+            ++ List.intercalate ", " candidates ++ "."
+      | otherwise -> return $ "Refine with '" ++ Ps.proofRule prf ++ "'."
+    Just (S.SplitStrategy var _)
+      | hintLevel == 0 -> return "Case-split."
+      | hintLevel == 1 -> do
+          (vars, _) <- runTCMEx tcs $ map show <$> AU.varsInScope ii
+          return $ "Split one of the variables in the patterns on the left hand side:\n"
+            ++ List.intercalate ", " vars ++ "."
+      | otherwise ->  return $ "Split variable '" ++ var ++ "'."
+
 
 -- | Retrieves the strategy for the given hole from the state.
 getStrategyFor :: InteractionId -> ExerciseM (Maybe S.ClauseStrategy)
 getStrategyFor ii = getFirst <$> use (exerciseStrategy . ix (interactionId ii) . to First)
 
 -- | Executes a split action.
-splitUser :: InteractionId -> String -> ExerciseM ()
+splitUser :: InteractionId -> String -> ExerciseM Feedback
 splitUser ii var = do
   prog <- use exerciseProgram
   -- invoke case splitting functionality
@@ -286,32 +328,65 @@ splitUser ii var = do
   checkProgramAndUpdate newDecls
   -- check strategy
   st <- getStrategyFor ii
-  let notWithStrat msg = outputStrLn msg >> regenerateStrategy
+  let notWithStrat msg = do
+        regenerateStrategy
+        return $ makeFeedback msg
   case st of
     Just (S.SplitStrategy sv cs)
-      | sv == var ->
+      | sv == var -> do
         exerciseStrategy %= concatReplace (interactionId ii) (map Just cs)
+        return $ makeFeedback "Correct!"
       | otherwise -> notWithStrat "I chose to split on a different variable here."
     Just (S.RefineStrategy _) -> notWithStrat "I chose to refine here."
-    Nothing -> notWithStrat "I didn't know what to do here."
+    Nothing -> notWithStrat $ "I didn't know what to do here. " ++
+      "I cannot guarantee you can solve the exercise that way, though it might still be possible."
 
 -- | Executes a refinement action.
-refineUser :: InteractionId -> String -> ExerciseM ()
+refineUser :: InteractionId -> String -> ExerciseM Feedback
 refineUser ii def = do
   prog <- use exerciseProgram
   (expr, _) <- runTCMEx (view S.programTCState prog) $ do
     -- parse the user input in the given context
     given <- B.parseExprIn ii noRange def
     -- try to refine the hole with the user expression
-    B.refine ii Nothing given
+    B.refine ii Nothing given >>= T.constructorFormA
   let newDecls = AU.replaceHole ii expr (view S.programDecls prog)
   checkProgramAndUpdate newDecls
   -- check strategy
   st <- getStrategyFor ii
-  -- TODO: do not regenerate strategy if the user actually did what we expected
   case st of
-    --Just (S.RefineStrategy prf) -> _
-    _ -> regenerateStrategy
+    Just (S.RefineStrategy prf) -> case stripPrefixFromProof expr prf of
+      AccFailure fb -> regenerateStrategy >> return fb
+      AccSuccess prfs -> do
+        exerciseStrategy %= concatReplace (interactionId ii) (map (Just . S.RefineStrategy) prfs)
+        return $ makeFeedback "Correct!"
+    Just (S.SplitStrategy _ _) ->
+      regenerateStrategy >> return (makeFeedback "I chose to split.")
+    _ -> regenerateStrategy >> return (makeFeedback "I didn't know what to do here.")
+
+-- | Given an expression, it checks whether that expression is a prefix of the given
+-- proof and returns the sub-proofs that coincide with question marks in the expression.
+stripPrefixFromProof :: A.Expr -> Ps.Proof -> AccValidation Feedback [Ps.Proof]
+stripPrefixFromProof = go where
+  -- ignore these
+  go (A.ScopedExpr _ e) prf = go e prf
+  -- try to parse other expressions as applications
+  go e prf = case T.flattenVisibleApp e of
+    A.Var v : args -> checkApp (prettyShow v) args prf
+    A.Def d : args -> checkApp (T.qNameS d) args prf
+    A.Con c : args -> checkApp (T.qNameS $ head $ A.unAmbQ c) args prf
+    A.QuestionMark _ _ : args
+      | null args -> pure [prf]
+      | otherwise -> cons prf <$> checkApp (Ps.proofRule prf) args prf
+    _ -> AccFailure $ makeFeedback "You have used a syntax that is not supported by this tutoring system."
+
+  checkApp fname args prf
+    | fname /= Ps.proofRule prf =
+        AccFailure $ makeFeedback $ printf "You used '%s' where I used '%s'." fname (Ps.proofRule prf)
+    | length args /= length (Ps.proofArgs prf) =
+        AccFailure $ makeFeedback $ printf "You applied '%s' too a different number of arguments (%d) than I did (%d)."
+          fname (length args) (length $ Ps.proofArgs prf)
+    | otherwise = concat <$> zipWithM go args (Ps.proofArgs prf)
 
 -- | Type checks a program and updates the current program state
 -- with the new program and TCState if successful.

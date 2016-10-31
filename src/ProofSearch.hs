@@ -1,17 +1,18 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE DeriveGeneric     #-}
 module ProofSearch where
 
+import           Control.DeepSeq
 import           Control.Monad.State
 import           Data.Functor.Const
 import           Data.Map            (Map)
 import qualified Data.Map            as Map
-import           Control.DeepSeq
+import           Data.Maybe          (isJust)
 import           GHC.Generics
 
-import SearchTree
+import           SearchTree
 
 -- | The type of variable identifiers. In contrast to the paper,
 -- this implementation currently relies on human readable strings.
@@ -102,6 +103,10 @@ instance Unify a => Unify [a] where
 
 instance Substitutable Subst where
   subst sub1 sub2 = Map.union sub1 $ fmap (subst sub1) sub2
+
+-- | Checks whether two things can be unified.
+canUnify :: Unify a => a -> a -> Bool
+canUnify x y = isJust $ unify x y
 
 -- | A rule is defined similar to Prolog, with a conclusion that follows from a list
 -- of premises that all need to be satisfied.

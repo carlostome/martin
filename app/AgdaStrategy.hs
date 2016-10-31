@@ -60,11 +60,11 @@ runStrategyGenerator verbosity agdaFile = do
     ips <- getInteractionPoints
     return (ips, abstractDecls)
   case ret of
-    Left err -> do printf "Exercise session failed with\n%s\n" err
+    Left err -> printf "Failed to load exercise file:\n%s\n" err
     Right (ips, decls) -> do
       session  <- S.initSession verbosity absPath
       Just str <- S.buildStrategy session decls
-      forM_ (zip ips str) $ \(ii,str) -> do
+      forM_ (zip ips str) $ \(ii,strat) -> do
         putStrLn $ "For hole " ++ show ii
-        putStrLn (maybe "  We were not able to generate a strategy" (("  "++).show) str)
+        putStrLn $ "  " ++ maybe "We were not able to generate a strategy" show strat
 

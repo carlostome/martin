@@ -183,7 +183,7 @@ thingsInScopeWithType ii = do
 -- | Parse an Agda file to concrete syntax.
 parseAgdaFile :: FilePath -> IO (AbsolutePath, [C.Declaration])
 parseAgdaFile path = do
-  absPath            <- absolute path
+  absPath <- absolute path
   (_, module') <- parseFile' moduleParser absPath
   return (absPath, module')
 
