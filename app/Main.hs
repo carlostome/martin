@@ -6,9 +6,10 @@ import           Strategy
 import qualified Options.Applicative as OA
 import           System.IO
 import           Text.Printf
+import Data.Monoid
 
 
-data MartinOpt =
+data MartinOpt = MartinOpt
   { agdaFile :: FilePath
   , runMode  :: Mode
   }
@@ -20,7 +21,7 @@ progOptionParser = MartinOpt
   <$> OA.argument OA.str
         (OA.metavar "FILE"
          <> OA.help "Path of the Agda file containing the exercise")
-  <*> OA.
+  <*> pure Interactive
 
 main :: IO ()
 main = undefined
