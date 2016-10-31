@@ -4,32 +4,32 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
-module Strategy where
+module Martin.Strategy where
 
-import qualified Agda.Interaction.BasicOps       as B
-import qualified Agda.Syntax.Abstract            as A
+import qualified Agda.Interaction.BasicOps    as B
+import qualified Agda.Syntax.Abstract         as A
 import           Agda.Syntax.Common
-import qualified Agda.Syntax.Internal            as I
+import qualified Agda.Syntax.Internal         as I
 import           Agda.Syntax.Position
 import           Agda.TheTypeChecker
 import           Agda.TypeChecking.Monad
 import           Agda.Utils.FileName
-import           Agda.Utils.Monad                hiding (ifM)
+import           Agda.Utils.Monad             hiding (ifM)
 
-import qualified Control.Exception               as E
+import qualified Control.Exception            as E
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Data.Generics.Geniplate
-import qualified Data.List                       as List
+import qualified Data.List                    as List
 
-import qualified AgdaUtil                        as AU
-import qualified MakeCaseModified                as MC
-import qualified ProofSearch                     as P
-import           SearchTree
-import           Translation
+import qualified Martin.Agda.MakeCaseModified as MC
+import           Martin.Agda.Translation
+import qualified Martin.Agda.Util             as AU
+import qualified Martin.Auto.ProofSearch      as P
+import           Martin.Auto.SearchTree
 
 -- | A strategy describing how to solve a clause towards an auto-generated model solution
 data ClauseStrategy

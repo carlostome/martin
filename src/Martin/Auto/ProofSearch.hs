@@ -2,7 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE RankNTypes        #-}
-module ProofSearch where
+{-| This module contains a Haskell implementation of the algorithm outlined in the
+- Auto in Agda paper by Kokke and Swierstra.
+-}
+module Martin.Auto.ProofSearch where
 
 import           Control.DeepSeq
 import           Control.Monad.State
@@ -12,7 +15,7 @@ import qualified Data.Map            as Map
 import           Data.Maybe          (isJust)
 import           GHC.Generics
 
-import           SearchTree
+import           Martin.Auto.SearchTree
 
 -- | The type of variable identifiers. In contrast to the paper,
 -- this implementation currently relies on human readable strings.

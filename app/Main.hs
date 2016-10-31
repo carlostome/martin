@@ -1,23 +1,22 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell  #-}
 module Main where
 
-import           Strategy
+import qualified AgdaInteraction     as AI
+import qualified AgdaStrategy        as AS
+import           Control.Lens
+import           Data.Monoid
 import qualified Options.Applicative as OA
 import           System.IO
 import           Text.Printf
-import Data.Monoid
-import Control.Lens
-import qualified AgdaInteraction as AI
-import qualified AgdaStrategy as AS
 
 
 data MartinOpt = MartinOpt
-  { _onlyPrint    :: Bool
-  , _splitDepth   :: Int
-  , _proofDepth   :: Int
-  , _verbose      :: Bool
-  , _agdaFile     :: FilePath
+  { _onlyPrint  :: Bool
+  , _splitDepth :: Int
+  , _proofDepth :: Int
+  , _verbose    :: Bool
+  , _agdaFile   :: FilePath
   }
 
 makeLenses ''MartinOpt

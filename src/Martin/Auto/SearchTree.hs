@@ -1,4 +1,7 @@
-module SearchTree where
+{-| This module contains an implementation of a search tree together with
+- suitable search combinators to traverse it.
+-}
+module Martin.Auto.SearchTree where
 
 import Data.Either
 

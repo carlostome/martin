@@ -15,28 +15,30 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     AgdaUtil
-                       ProofSearch
-                       MakeCaseModified
-                       Translation
-                       SearchTree
-                       Strategy
+  exposed-modules:     Martin.Agda.Util
+                       Martin.Agda.MakeCaseModified
+                       Martin.Agda.Translation
+                       Martin.Auto.ProofSearch
+                       Martin.Auto.SearchTree
+                       Martin.Interaction
+                       Martin.Strategy
   build-depends:       base >= 4.7 && < 5
                      , Agda
-                     , transformers
-                     , mtl
                      , containers
                      , deepseq
-                     , geniplate-mirror
                      , filepath
+                     , geniplate-mirror
                      , lens
+                     , mtl
+                     , transformers
+                     , validation
   default-language:    Haskell2010
 
 executable martin-exe
   hs-source-dirs:      app
   main-is:             Main.hs
-  other-modules:       AgdaInteraction
-                       AgdaStrategy
+  other-modules:       AgdaStrategy
+                       AgdaInteraction
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , Agda

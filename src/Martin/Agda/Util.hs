@@ -3,7 +3,10 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
-module AgdaUtil
+{-| This module contains several utility functions that make working
+-   with Agda as a library much more pleasant.
+-}
+module Martin.Agda.Util
   ( -- * Program manipulation
     rebuildInteractionPoints
   , replaceClauses

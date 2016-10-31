@@ -1,7 +1,11 @@
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE TupleSections   #-}
-
-module MakeCaseModified where
+{-| This module is a copy of the Agda module "Agda.Interaction.MakeCase" with one small change.
+-   Instead of calling 'getImportedSignature' when searching a Clause, it calls 'getSignature'.
+-   This is because at the point where we need this functionality, we have never actually finished
+-   the type checking in a way that our definitions would be part of the imported signature.
+-}
+module Martin.Agda.MakeCaseModified where
 
 import Prelude hiding (mapM, mapM_, null)
 import Control.Applicative hiding (empty)

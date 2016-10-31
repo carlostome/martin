@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-| This module contains the functionality to translate Agda terms to proof search terms.
 -}
-module Translation
+module Martin.Agda.Translation
   ( goalAndRules
   , generateHints
   , generateGoal
@@ -28,9 +28,8 @@ import           Control.Arrow
 import           Control.Monad
 import           Control.Monad.Trans.Maybe
 
-import qualified AgdaUtil                                   as AU
-import           Debug.Trace
-import qualified ProofSearch                                as Ps
+import qualified Martin.Agda.Util                           as AU
+import qualified Martin.Auto.ProofSearch                    as Ps
 
 -- | For an interaction point, returns the proof search term representing the goal
 -- and a hint database containing all definitions that are in scope.
@@ -151,7 +150,7 @@ typeToPsTerms cv scope other = case flattenVisibleApp other of
     let uname = "_" ++ metaNameSuggestion mi ++ "_" ++ maybe "" show (metaNumber mi)
     return [Ps.var uname]
   -- unsupported syntax
-  what -> traceM ("UNSUPPORTED " ++ show what) >> mzero -- unsupported syntax
+  _ -> mzero -- unsupported syntax
 
 -- | Combines a list of terms with function arrows.
 mkFunType :: [Ps.PsTerm] -> Ps.PsTerm

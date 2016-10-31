@@ -33,10 +33,10 @@ import qualified Text.ParserCombinators.ReadPrec            as ReadPrec
 import           Text.Printf
 import           Text.Read                                  (readPrec)
 
-import qualified AgdaUtil                                   as AU
-import qualified MakeCaseModified                           as MC
-import qualified ProofSearch                                as Ps
-import qualified Strategy                                   as S
+import qualified Martin.Agda.MakeCaseModified               as MC
+import qualified Martin.Agda.Util                           as AU
+import qualified Martin.Auto.ProofSearch                    as Ps
+import qualified Martin.Strategy                            as S
 
 -- | Runs an interactive user session, loading the given exercise
 -- This should be the main entry point for everything having to do with Agda.
