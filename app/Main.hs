@@ -1,28 +1,30 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE TemplateHaskell   #-}
 module Main where
 
-import qualified AgdaStrategy        as AS
-import qualified AgdaInteraction     as AI
-import qualified AgdaApp             as AA
+import qualified AgdaApp                as AA
+import qualified AgdaInteraction        as AI
+import qualified AgdaStrategy           as AS
+import qualified Martin.Agda.Util       as AU
 
 import           Control.Lens
+import           Control.Monad.IO.Class
 import           Data.Monoid
-import qualified Options.Applicative as OA
+import qualified Options.Applicative    as OA
 import           System.IO
 import           Text.Printf
-import Control.Monad.IO.Class
 
 -- | Options for the app
 data MartinOpt = MartinOpt
-  { _onlyPrint  :: Bool
-  , _splitDepth :: Int
-  , _proofDepth :: Int
-  , _verbose    :: Bool
-  , _agdaApp    :: Bool
-  , _agdaFile   :: FilePath
+  { _onlyPrint     :: Bool
+  , _splitDepth    :: Int
+  , _proofDepth    :: Int
+  , _verbose       :: Bool
+  , _agdaVerbosity :: Int
+  , _agdaApp       :: Bool
+  , _agdaFile      :: FilePath
   }
 
 makeLenses ''MartinOpt
@@ -50,6 +52,11 @@ progOptionParser = MartinOpt
         (OA.short 'v' <>
          OA.long "verbose" <>
          OA.help "print verbose debug messages during execution")
+  <*> OA.option OA.auto
+        (OA.metavar "VERB" <>
+         OA.long "agda-verbosity" <>
+         OA.help "the verbosity of the Agda compiler" <>
+         OA.value 0)
   <*> OA.switch
         (OA.short 'a' <>
          OA.long "app" <>
@@ -62,11 +69,13 @@ main :: IO ()
 main = do
   options <- OA.execParser opts
   let file = view agdaFile options
+  let agdaOpts = AU.defaultAgdaOptions
+        & AU.agdaOptVerbosity .~ view agdaVerbosity options
   if view onlyPrint options
-     then AS.runStrategyGenerator 0 file
+     then AS.runStrategyGenerator agdaOpts file
      else if view agdaApp options
-            then AA.runApp file
-            else AI.runInteractiveSession 0 file
+            then AA.runApp agdaOpts file
+            else AI.runInteractiveSession agdaOpts file
 
   where
     opts = OA.info (OA.helper <*> progOptionParser)

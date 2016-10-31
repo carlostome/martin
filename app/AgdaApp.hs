@@ -1,39 +1,32 @@
 {-# LANGUAGE TemplateHaskell #-}
 module AgdaApp where
 
+import qualified AgdaInteraction        as AI
+import qualified AgdaStrategy           as AS
+import qualified Martin.Agda.Util       as AU
 import qualified Martin.Interaction     as MI
-import qualified AgdaStrategy        as AS
-import qualified AgdaInteraction    as AI
-import Agda.Syntax.Common
+
+import           Agda.Syntax.Common
+
 import           Control.Lens
+import           Control.Monad.IO.Class
 import           Data.Monoid
-import qualified Options.Applicative as OA
+import qualified Options.Applicative    as OA
 import           System.IO
 import           Text.Printf
-import Control.Monad.IO.Class
 
-import Data.Monoid
-import Control.Lens
-
-import qualified Graphics.Vty as V
-import qualified Brick.Main as M
-import qualified Brick.Types as T
-import Brick.Widgets.Core
-  ( (<+>)
-  , (<=>)
-  , hLimit
-  , vLimit
-  , str
-  , padTop
-  , padBottom
-  )
-import qualified Brick.Widgets.Center as C
-import qualified Brick.Widgets.Edit as E
-import qualified Brick.Widgets.Border as B
-import qualified Brick.Widgets.Dialog as D
-import qualified Brick.AttrMap as A
-import qualified Brick.Focus as F
-import Brick.Util (on)
+import qualified Brick.AttrMap          as A
+import qualified Brick.Focus            as F
+import qualified Brick.Main             as M
+import qualified Brick.Types            as T
+import           Brick.Util             (on)
+import qualified Brick.Widgets.Border   as B
+import qualified Brick.Widgets.Center   as C
+import           Brick.Widgets.Core     (hLimit, padBottom, padTop, str, vLimit,
+                                         (<+>), (<=>))
+import qualified Brick.Widgets.Dialog   as D
+import qualified Brick.Widgets.Edit     as E
+import qualified Graphics.Vty           as V
 
 --------------------------------------------------------------------------------
 
@@ -42,11 +35,11 @@ data Name = Edit
 
 data St =
     St {
-         _edit :: E.Editor String Name
+         _edit          :: E.Editor String Name
        , _currentWindow :: Window
        , _exState       :: MI.ExerciseState
        , _exProg        :: String
-       , _userDialog   :: String
+       , _userDialog    :: String
        }
 
 data Window = HelpW | MainW
@@ -67,7 +60,7 @@ drawUI st = [ui]
                      str " " <=>
                      B.hBorder
                      <=>
-                     D.renderDialog topLevelDialog 
+                     D.renderDialog topLevelDialog
                      (vLimit 1 $ padTop T.Max $ str (view userDialog st))
                      <=>
                      str " " <=>
@@ -94,7 +87,7 @@ appEvent exEnv st ev =
       in case ev of
            V.EvKey V.KEsc []        -> returnToMain
            V.EvKey (V.KChar 'q') [] -> returnToMain
-           _ -> M.continue st
+           _                        -> M.continue st
     MainW ->
       case ev of
         -- Either Esc or q exits the app.
@@ -151,9 +144,9 @@ mkTheApp env =
         , M.appLiftVtyEvent  = id
         }
 
-runApp :: FilePath -> IO ()
-runApp agdaFile = do
-  i <- MI.initExercise 0 agdaFile
+runApp :: AU.AgdaOptions -> FilePath -> IO ()
+runApp agdaOpts agdaFile = do
+  i <- MI.initExercise agdaOpts agdaFile
   case i of
     Left err -> putStrLn err
     Right (exEnv,exState) -> do

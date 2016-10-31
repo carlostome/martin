@@ -37,34 +37,18 @@ import qualified Martin.Agda.MakeCaseModified               as MC
 import qualified Martin.Agda.Util                           as AU
 import qualified Martin.Auto.ProofSearch                    as Ps
 import qualified Martin.Strategy                            as S
+import qualified Martin.Interaction as I
 
 -- | Runs an interactive user session, loading the given exercise
 -- This should be the main entry point for everything having to do with Agda.
-runStrategyGenerator :: Int -> FilePath -> IO ()
-runStrategyGenerator verbosity agdaFile = do
-  -- load the Agda file
-  (absPath, module') <- AU.parseAgdaFile agdaFile
-  (ret, progState) <- runTCM initEnv initState
-    $ local (\e -> e { envCurrentPath = Just absPath })
-    $ flip catchError (prettyError >=> return . Left ) $ Right <$> do
-    -- load Level primitives and setup TCM state
-    initialState <- AU.initAgda verbosity -- the number is the verbosity level, useful for debugging
-    -- REMARK: initialState should now contain a snapshot of an initialized Agda session and can be used to quickly
-    -- revert when we need to recheck the exercise code.
-    -- convert exercise to abstract syntax
-    abstractDecls <- toAbstract module'
-    -- check that the exercise is valid to begin with
-    checkDecls abstractDecls
-    unfreezeMetas
-
-    ips <- getInteractionPoints
-    return (ips, abstractDecls)
+runStrategyGenerator :: AU.AgdaOptions -> FilePath -> IO ()
+runStrategyGenerator opts agdaFile = do
+  ret <- I.initExercise opts agdaFile
   case ret of
-    Left err -> printf "Failed to load exercise file:\n%s\n" err
-    Right (ips, decls) -> do
-      session  <- S.initSession verbosity absPath
-      Just str <- S.buildStrategy session decls
-      forM_ (zip ips str) $ \(ii,strat) -> do
-        putStrLn $ "For hole " ++ show ii
-        putStrLn $ "  " ++ maybe "We were not able to generate a strategy" show strat
+    Left err -> printf "Failed to generate strategy:\n%s\n" err
+    Right (_, st) -> do
+      let strat = view I.exerciseStrategy st
+      forM_ (zip [0..] strat) $ \(ii,s) -> do
+        printf "For hole ?%d\n" (ii :: Int)
+        printf "  %s" $ maybe "We were not able to generate a strategy" S.prettyStrategy s
 

@@ -260,15 +260,15 @@ runTCMEx tcs tcm = do
 runExerciseM :: ExerciseEnv -> ExerciseState -> (ReaderT ExerciseEnv (StateT ExerciseState IO) a) -> IO (a,ExerciseState)
 runExerciseM exEnv exState m = runStateT (runReaderT m exEnv) exState
 
-initExercise :: Int -> FilePath -> IO (Either String (ExerciseEnv, ExerciseState))
-initExercise verbosity agdaFile = do
+initExercise :: AU.AgdaOptions -> FilePath -> IO (Either String (ExerciseEnv, ExerciseState))
+initExercise opts agdaFile = do
   -- load the Agda file-
   (absPath, module') <- AU.parseAgdaFile agdaFile
   (ret, progState) <- runTCM initEnv initState
     $ local (\e -> e { envCurrentPath = Just absPath })
     $ flip catchError (prettyError >=> return . Left ) $ Right <$> do
     -- load Level primitives and setup TCM state
-    _ <- AU.initAgda verbosity
+    _ <- AU.initAgda opts
     -- convert exercise to abstract syntax
     abstractDecls <- toAbstract module'
     checkState <- get
@@ -290,7 +290,7 @@ initExercise verbosity agdaFile = do
   case ret of
     Left err -> return . Left $ "Exercise session failed with\n%s\n" ++ err
     Right (initialState, decls) -> do
-      session <- S.initSession verbosity absPath
+      session <- S.initSession opts absPath
       Just str <- S.buildStrategy session decls
 
       let exEnv = ExerciseEnv

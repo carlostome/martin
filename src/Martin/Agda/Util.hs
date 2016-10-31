@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
@@ -21,6 +21,10 @@ module Martin.Agda.Util
   -- * Managing Agda state
   , initAgda
   , importAllAbstract
+  , AgdaOptions (..)
+  , defaultAgdaOptions
+  , agdaOptVerbosity
+  , agdaOptIncludePaths
   ) where
 
 import qualified Agda.Interaction.BasicOps                  as B
@@ -44,6 +48,7 @@ import           Agda.Utils.FileName
 import           Agda.Utils.Monad                           hiding (ifM)
 import qualified Agda.Utils.Trie                            as Trie
 
+import Control.Lens
 import           Control.Arrow                              ((&&&))
 import           Control.Monad.Except
 import           Control.Monad.State.Strict
@@ -52,6 +57,17 @@ import           Data.Generics.Geniplate
 import qualified Data.Map.Strict                            as Map
 import qualified Data.Set                                   as Set
 import           System.FilePath                            ((</>))
+
+-- | Some additional options that can be passed to Agda.
+data AgdaOptions = AgdaOptions
+  { _agdaOptVerbosity    :: Int
+  , _agdaOptIncludePaths :: [FilePath]
+  }
+
+makeLenses ''AgdaOptions
+
+defaultAgdaOptions :: AgdaOptions
+defaultAgdaOptions = AgdaOptions 0 []
 
 -- | Replaces all question marks with fresh interaction points and registers them with the type checker.
 -- This step is necessary after resetting the type checker state.
@@ -92,15 +108,17 @@ checkTopLevel ii = any look
 
 -- | This initializes the TCM state just enough to get everything started.
 -- For now, it uses the default options and loads Agda's Level primitives.
-initAgda :: Int -> TCM TCState
-initAgda verbosity = do
+initAgda :: AgdaOptions -> TCM TCState
+initAgda opts = do
   -- initialize interactive state
   resetAllState
   setCommandLineOptions defaultOptions
     { optPragmaOptions = (optPragmaOptions defaultOptions)
-      { optVerbose = Trie.singleton [] verbosity }
+      { optVerbose = Trie.singleton [] (view agdaOptVerbosity opts) }
     }
-
+  -- set include path
+  absIncl <- liftIO $ mapM absolute (view agdaOptIncludePaths opts)
+  Lens.modifyAbsoluteIncludePaths (++ absIncl)
   -- ==================== BEGIN CODE FROM AGDA SOURCE
   libdir <- liftIO defaultLibDir
   -- To allow posulating the built-ins, check the primitive module
@@ -240,7 +258,7 @@ importModuleAbstract minfo x = setCurrentRange (getRange minfo) $ do
   -- Bind the desired module name to the right abstract name.
   bindQModule PrivateAccess x m
 
-  openModule_ x dir
+  void $ openModule_ x dir
   return ()
 
 importAllAbstract :: [A.Declaration] -> TCM ()

@@ -40,16 +40,16 @@ data ClauseStrategy
   -- that the split introduced an absurd-pattern.
   | RefineStrategy P.Proof
   -- ^ refines the current hole with a proof found by the proof search
-  deriving (Read, Eq, Ord)
+  deriving (Show, Read, Eq, Ord)
 
 -- | A strategy for solving an exercise consists of one strategy for each clause of the exercise
 type ExerciseStrategy = [Maybe ClauseStrategy]
 
-instance Show ClauseStrategy where
-  show (SplitStrategy s cl) = unlines
+prettyStrategy :: ClauseStrategy -> String
+prettyStrategy (SplitStrategy s cl) = unlines
     (("split at " ++ s ++ " and:") :
      map (("    "++) . show) cl)
-  show (RefineStrategy pr) =
+prettyStrategy (RefineStrategy pr) =
     "refine with: " ++ P.proofToStr pr
 
 -- | Pairs an abstract Agda program with the type checker state after checking said program.
@@ -228,15 +228,15 @@ generateStrategy prog = do
 data Session = Session
   { buildStrategy :: [A.Declaration] -> IO (Maybe ExerciseStrategy) }
 
-initSession :: Int -> AbsolutePath -> IO Session
-initSession verbosity path = do
-  (tcmState,_) <- runTCM initEnv initState $ AU.initAgda verbosity
+initSession :: AU.AgdaOptions -> AbsolutePath -> IO Session
+initSession opts path = do
+  (tcmState,_) <- runTCM initEnv initState $ AU.initAgda opts
   let env = SearchEnvironment
         { _initialTCState  = tcmState
         , _initialTCEnv    = initEnv { envCurrentPath = Just path }
         , _splitDepthLimit = 4
         , _proofDepthLimit = 7
-        , _debugMode       = True
+        , _debugMode       = False
         }
   return Session
      { buildStrategy = \decls -> runReaderT (runMaybeT $ generateStrategy decls) env }

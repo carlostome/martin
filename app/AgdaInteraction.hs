@@ -42,9 +42,9 @@ type ExerciseM = InputT (ReaderT ExerciseEnv (StateT ExerciseState IO))
 
 -- | Runs an interactive user session, loading the given exercise
 -- This should be the main entry point for everything having to do with Agda.
-runInteractiveSession :: Int -> FilePath -> IO ()
-runInteractiveSession verbosity agdaFile = do
-  ret <- initExercise verbosity agdaFile
+runInteractiveSession :: AU.AgdaOptions -> FilePath -> IO ()
+runInteractiveSession opts agdaFile = do
+  ret <- initExercise opts agdaFile
 
   case ret of
     Left err -> printf "Exercise session failed with\n%s\n" err
@@ -55,6 +55,8 @@ runInteractiveSession verbosity agdaFile = do
         , "Type `h` to get help!"
         , ""
         ]
+
+      print $ view exerciseStrategy exState
 
       let go = do
             prettyProgram >>= outputStrLn
