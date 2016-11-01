@@ -25,12 +25,13 @@ import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import           Data.Generics.Geniplate
 import qualified Data.List                    as List
+import           Text.Printf
 
 import qualified Martin.Agda.MakeCaseModified as MC
-import           Martin.Auto.Translation
 import qualified Martin.Agda.Util             as AU
 import qualified Martin.Auto.ProofSearch      as P
 import           Martin.Auto.SearchTree
+import           Martin.Auto.Translation
 
 -- | A strategy describing how to solve a clause towards an auto-generated model solution
 data ClauseStrategy
@@ -47,8 +48,8 @@ type ExerciseStrategy = [Maybe ClauseStrategy]
 
 prettyStrategy :: ClauseStrategy -> String
 prettyStrategy (SplitStrategy s cl) = unlines
-    (("split at " ++ s ++ " and:") :
-     map (("    "++) . show) cl)
+    (("split at " ++ s ++ " and") :
+     zipWith (printf "    %d. %s") [1 :: Int ..] (map prettyStrategy cl))
 prettyStrategy (RefineStrategy pr) =
     "refine with: " ++ P.proofToStr pr
 

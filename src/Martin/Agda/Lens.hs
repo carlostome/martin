@@ -10,6 +10,7 @@ import qualified Agda.Syntax.Abstract.Views                 as A
 import           Agda.Syntax.Common
 import           Agda.Syntax.Info
 import           Agda.Syntax.Literal
+import           Agda.Syntax.Scope.Base
 
 import           Control.Lens
 import           Data.Generics.Geniplate
@@ -95,7 +96,7 @@ class HasClauses a where
   -- | Traverses all clauses that have an actual RHS.
   rhsClauses :: Traversal' a A.Clause
   -- | Traverses all clauses that have an actual RHS and allows replacing them with multiple.
-  splitClauses :: IndexedTraversal QuestionMark a a A.Clause [A.Clause]
+  splitClauses :: IndexedTraversal QuestionMark a a [A.Clause] [A.Clause]
 
 instance HasClauses A.Declaration where
   rhsClauses f = go where
@@ -123,7 +124,7 @@ instance HasClauses A.Declaration where
     goClause cls = checkRHS (A.clauseRHS cls) cls
     checkRHS (A.RHS e) cls = case preview (skipScoped . _QuestionMark) e of
       Nothing -> pure [cls]
-      Just qm -> indexed f qm cls
+      Just qm -> indexed f qm [cls]
     checkRHS A.AbsurdRHS cls = pure [cls]
     checkRHS (A.WithRHS q e cls') cls = (\c -> [cls { A.clauseRHS = A.WithRHS q e c }]) . concat <$> traverse goClause cls'
     checkRHS (A.RewriteRHS _ r _) cls = checkRHS r cls
@@ -137,3 +138,20 @@ rhs :: Traversal' A.Clause A.Expr
 rhs f cls = case A.clauseRHS cls of
   A.RHS e -> (\r -> cls { A.clauseRHS = A.RHS r }) <$> f e
   _       -> pure cls
+
+-- | A traversal of all patterns in a clause
+clausePatterns :: Traversal' A.Clause A.Pattern
+clausePatterns f = go where
+  go (A.Clause (A.LHS i (A.LHSHead qn pats) wpats) crhs decls ca)
+    = (\pats' wpats' -> A.Clause (A.LHS i (A.LHSHead qn pats') wpats') crhs decls ca)
+      <$> (traversed . _unArg . _namedThing) f pats
+      <*> traverse f wpats
+  go other = pure other
+
+-- | A traversal over all scope infos in an AST.
+scopes :: A.ExprLike e => Traversal' e ScopeInfo
+scopes f = A.recurseExpr go where
+  go (A.ScopedExpr sc _) erec = (\s (A.ScopedExpr _ e') -> A.ScopedExpr s e') <$> f sc <*> erec
+  go (A.QuestionMark mi ii) _ = (\s -> A.QuestionMark mi { metaScope = s } ii) <$> f (metaScope mi)
+  go _ other = other
+ 

@@ -58,27 +58,15 @@ replaceHole ii repl = L.interactionPoint ii .~ repl
 -- | Replaces the clause identified by the interaction id of its single RHS hole
 -- with the list of new clauses.
 replaceClauses :: InteractionId -> [A.Clause] -> [A.Declaration] -> [A.Declaration]
-replaceClauses ii newClauses = iover L.splitClauses update where
-  update (miq, iiq) cls
-    | iiq == ii = map (initScope $ metaScope miq) newClauses
-    | otherwise = [cls]
+replaceClauses ii newClauses = iset target (traverse injectLocalScope newClauses . metaScope . fst) where
+  target = L.splitClauses . indices (views _2 (== ii))
 
-  initScope scope clause =
-    -- here we need to extract all the bound names in the patterns of the clause and insert
-    -- them into the top level scope
-    let locals = map (A.nameConcrete &&& LocalVar) $ clauseLocals $ A.clauseLHS clause
-        newScope = scope { scopeLocals = locals }
-        -- update scoped things in the expression with the new scope
-        updScope (A.ScopedExpr _ e) = A.ScopedExpr newScope e
-        updScope (A.QuestionMark mi hole) = A.QuestionMark mi { metaScope = newScope } hole
-        updScope o = o
-    in A.mapExpr updScope clause
-
-  -- finds all local variables in a clause
-  -- REMARK: currently only works for patterns, not co-patterns
-  clauseLocals (A.LHS _ (A.LHSHead _ pats) wpats) = toListOf (traversed . L._unArg . L._namedThing . L.patternVars) pats
-    ++ toListOf (traversed . L.patternVars) wpats
-  clauseLocals _ = []
+-- | Injects the given scope info into the clause, but retains the local scope of each clause.
+injectLocalScope :: A.Clause -> ScopeInfo -> A.Clause
+injectLocalScope clause scope =
+  let locals = toListOf (L.clausePatterns . L.patternVars . to (A.nameConcrete &&& LocalVar)) clause
+      newScope = scope { scopeLocals = locals }
+  in clause & L.scopes .~ newScope
 
 -- | In the abstract syntax, sets the 'metaNumber' of 'QuestionMark' to
 -- the corresponding interaction ID to have it printed. Seems to be the suggested
