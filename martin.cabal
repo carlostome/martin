@@ -18,6 +18,7 @@ data-dir:            data
 library
   hs-source-dirs:      src
   exposed-modules:     Martin.Agda.Init
+                       Martin.Agda.Lens
                        Martin.Agda.MakeCaseModified
                        Martin.Agda.Query
                        Martin.Agda.Transform

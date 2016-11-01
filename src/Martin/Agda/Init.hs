@@ -11,13 +11,11 @@ module Martin.Agda.Init
   , agdaOptIncludePaths
   ) where
 
-import qualified Agda.Interaction.BasicOps                  as B
 import           Agda.Interaction.FindFile
 import           Agda.Interaction.Imports
 import           Agda.Interaction.Options
 import qualified Agda.Interaction.Options.Lenses            as Lens
 import qualified Agda.Syntax.Abstract                       as A
-import qualified Agda.Syntax.Abstract.Views                 as A
 import           Agda.Syntax.Common
 import qualified Agda.Syntax.Concrete                       as C
 import           Agda.Syntax.Info                           as I
@@ -32,14 +30,11 @@ import           Agda.Utils.FileName
 import           Agda.Utils.Monad                           hiding (ifM)
 import qualified Agda.Utils.Trie                            as Trie
 
-import Control.Lens
-import           Control.Arrow                              ((&&&))
+import           Control.Lens
 import           Control.Monad.Except
 import           Control.Monad.State.Strict
-import           Control.Monad.Writer
 import           Data.Generics.Geniplate
 import qualified Data.Map.Strict                            as Map
-import qualified Data.Set                                   as Set
 import           System.FilePath                            ((</>))
 
 -- | Some additional options that can be passed to Agda.
