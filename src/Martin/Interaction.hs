@@ -33,9 +33,9 @@ import           Data.Validation
 import           Text.Printf
 
 import qualified Martin.Agda.MakeCaseModified               as MC
-import qualified Martin.Agda.Translation                    as T
 import qualified Martin.Agda.Util                           as AU
 import qualified Martin.Auto.ProofSearch                    as Ps
+import qualified Martin.Auto.Translation                    as T
 import qualified Martin.Strategy                            as S
 
 -- | An exercise is just an Agda file, represented by the declarations inside it.
@@ -149,7 +149,7 @@ refineUser ii def = do
     -- parse the user input in the given context
     given <- B.parseExprIn ii noRange def
     -- try to refine the hole with the user expression
-    B.refine ii Nothing given >>= T.constructorFormA
+    B.refine ii Nothing given >>= AU.constructorFormA
   let newDecls = AU.replaceHole ii expr (view S.programDecls prog)
   checkProgramAndUpdate newDecls
   -- check strategy
@@ -171,7 +171,7 @@ stripPrefixFromProof = go where
   -- ignore these
   go (A.ScopedExpr _ e) prf = go e prf
   -- try to parse other expressions as applications
-  go e prf = case T.flattenVisibleApp e of
+  go e prf = case AU.flattenVisibleApp e of
     A.Var v : args -> checkApp (prettyShow v) args prf
     A.Def d : args -> checkApp (T.qNameS d) args prf
     A.Con c : args -> checkApp (T.qNameS $ head $ A.unAmbQ c) args prf

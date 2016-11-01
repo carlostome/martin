@@ -1,13 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-| This module contains the functionality to translate Agda terms to proof search terms.
 -}
-module Martin.Agda.Translation
+module Martin.Auto.Translation
   ( goalAndRules
   , generateHints
   , generateGoal
-  , flattenVisibleApp
-  , literalToConstructor
-  , constructorFormA
   , qNameS
   ) where
 
@@ -69,15 +66,6 @@ generateRules name expr = mkRules <$> runMaybeT (typeToPsTerms convertVarForRule
 generateGoal :: A.Expr -> MaybeT TCM Ps.PsTerm
 generateGoal = typeToPsTermFun convertVarForGoal []
 
--- | This takes an expression and flattens all top level binary application constructors into a list.
--- For example, it will turn @(f x) y@ into @[f, x, y]@.
--- If there is no application, a singleton list is returned, i.e. a single @x@ is transformed into @[x]@.
--- Implicit arguments are left out.
-flattenVisibleApp :: A.Expr -> [A.Expr]
-flattenVisibleApp (A.App _ f x) = flattenVisibleApp f ++ [ namedThing $ unArg x | not (isHiddenArg x) ]
-flattenVisibleApp (A.ScopedExpr _ e) = flattenVisibleApp e
-flattenVisibleApp other = [other]
-
 -- | Extracts all bindings from a Pi-type telescope together with their visibility.
 telescopeBindings :: A.Telescope -> [(A.Name, Hiding, A.Expr)]
 telescopeBindings = concatMap go where
@@ -86,10 +74,6 @@ telescopeBindings = concatMap go where
     A.TLet _ _ -> [] -- somehow used for let bindings, not relevant for us
 
   mk h ty (WithHiding h2 n) = [(n, mappend h h2, ty)]
-
--- | Checks whether an argument is implicit.
-isHiddenArg :: Arg a -> Bool
-isHiddenArg arg = argInfoHiding (argInfo arg) == Hidden
 
 -- | Variable conversion function taking a scope and a name, turning it into a PsTerm.
 type ConvertVar = [A.Name] -> A.Name -> Ps.PsTerm
@@ -123,7 +107,7 @@ typeToPsTerms cv scope (A.ScopedExpr _ e) = typeToPsTerms cv scope e
 -- non-dependent function ...
 typeToPsTerms cv scope (A.Fun _ arg ret)
   -- ... with an implicit argument
-  | isHiddenArg arg = typeToPsTerms cv scope ret
+  | AU.isHiddenArg arg = typeToPsTerms cv scope ret
   -- ... with an explicit argument that needs to be converted as well
   | otherwise = do
       argTerm <- typeToPsTermFun cv scope (unArg arg)
@@ -131,7 +115,7 @@ typeToPsTerms cv scope (A.Fun _ arg ret)
 -- a dependent function arrow (pi-type)
 typeToPsTerms cv scope (A.Pi _ tel ret) = piTypeToPsTerms cv scope (telescopeBindings tel) ret
 -- any other syntactic elements are flattened to a list of applications
-typeToPsTerms cv scope other = case flattenVisibleApp other of
+typeToPsTerms cv scope other = case AU.flattenVisibleApp other of
   [] -> mzero -- should not happen
   (A.Var var : args)
     | null args -> return [cv scope var] -- allowed
@@ -141,7 +125,7 @@ typeToPsTerms cv scope other = case flattenVisibleApp other of
   (A.Con con : args) -> fromDefOrCon cv scope (qNameS $ head $ A.unAmbQ con) args
   -- translate literal naturals
   (A.Lit lit : _) -> do
-    con <- MaybeT $ literalToConstructor lit
+    con <- MaybeT $ AU.literalToConstructor lit
     typeToPsTerms cv scope con
   -- set expressions
   (A.Set _ lvl : _) -> return [Ps.con "Set" (Ps.con $ show lvl)]
@@ -177,14 +161,3 @@ piTypeToPsTerms cv scope ((argName, h, argTy):args) ret = case h of
 qNameS :: A.QName -> String
 qNameS (A.QName _ n) = show $ A.nameConcrete n
 
--- | Converts a literal to an expression consisting of the corresponding constructors.
-literalToConstructor :: Literal -> TCM (Maybe A.Expr)
-literalToConstructor lit = fmap Just (constructorForm (I.Lit lit) >>= reify) `catchError` \_ -> return Nothing
-
--- | Converts all literals in an expression to their corresponding constructors.
-constructorFormA :: A.ExprLike e => e -> TCM e
-constructorFormA = A.traverseExpr $ \case
-  A.Lit lit -> literalToConstructor lit >>= \case
-    Nothing -> pure $ A.Lit lit
-    Just c -> pure c
-  other -> pure other

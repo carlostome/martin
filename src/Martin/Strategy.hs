@@ -27,7 +27,7 @@ import           Data.Generics.Geniplate
 import qualified Data.List                    as List
 
 import qualified Martin.Agda.MakeCaseModified as MC
-import           Martin.Agda.Translation
+import           Martin.Auto.Translation
 import qualified Martin.Agda.Util             as AU
 import qualified Martin.Auto.ProofSearch      as P
 import           Martin.Auto.SearchTree

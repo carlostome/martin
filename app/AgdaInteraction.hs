@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
 {-# LANGUAGE UndecidableInstances  #-}
 module AgdaInteraction where
@@ -12,9 +11,6 @@ import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
 import qualified Agda.Syntax.Abstract.Pretty                as A
 import           Agda.Syntax.Common
-import           Agda.Syntax.Translation.ConcreteToAbstract
-import           Agda.TheTypeChecker
-import           Agda.TypeChecking.Errors
 import           Agda.TypeChecking.Monad
 import           Agda.Utils.Pretty
 
@@ -22,7 +18,6 @@ import           Control.Lens
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
-import qualified Data.Map.Strict                            as Map
 import           System.Console.Haskeline
 import qualified System.Console.Haskeline                   as HaskEx
 import qualified Text.ParserCombinators.ReadP               as ReadP

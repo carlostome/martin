@@ -17,11 +17,14 @@ data-dir:            data
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Martin.Agda.Util
+  exposed-modules:     Martin.Agda.Init
                        Martin.Agda.MakeCaseModified
-                       Martin.Agda.Translation
+                       Martin.Agda.Query
+                       Martin.Agda.Transform
+                       Martin.Agda.Util
                        Martin.Auto.ProofSearch
                        Martin.Auto.SearchTree
+                       Martin.Auto.Translation
                        Martin.Interaction
                        Martin.Strategy
   build-depends:       base >= 4.7 && < 5
@@ -65,8 +68,10 @@ test-suite martin-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
+                     , Agda
                      , directory
                      , filepath
+                     , geniplate-mirror
                      , hspec
                      , lens
                      , martin
