@@ -110,8 +110,7 @@ runReadP p s =
 exerciseLoop :: ExerciseM ()
 exerciseLoop = do
   -- check if there are still holes to be filled
-  tcs <- use $ exerciseProgram . S.programTCState
-  (ips, _) <- runTCMEx tcs getInteractionPoints
+  ips <- currentInteractionPoints
   if null ips
     then outputStrLn "All goals have been solved, congratulations!"
     else do

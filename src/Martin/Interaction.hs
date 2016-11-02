@@ -324,3 +324,9 @@ contextOfHole ii = do
         return $ pname <+> char ':' <+> pty
   (doc, _) <- runTCMEx tcs $ AU.thingsInScopeWithType ii >>= mapM prettyCtx
   return $ map render doc
+
+currentInteractionPoints :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+                         => m [InteractionId]
+currentInteractionPoints = do
+  tcs <- use $ exerciseProgram . S.programTCState
+  fst <$> runTCMEx tcs getInteractionPoints
