@@ -225,6 +225,7 @@ appEvent st ev =
                                   else M.continue (st & edit .~ editor
                                                       & userDialog .~ ("Hole does not exists!" ))
                     _   -> M.continue newSt
+            _   -> M.continue newSt
     TopLevel ->
       case ev of
         V.EvKey V.KEnter [] -> do
