@@ -63,7 +63,7 @@ data St =
        , _holeDialog    :: D.Dialog HoleCommand
        }
 
-data Focus = TopLevel | HoleLevel InteractionId | UserInput Action
+data Focus = TopLevel | HoleLevel InteractionId | UserInput Action | Done
   deriving (Eq, Show)
 
 data Action = Select | Refine InteractionId | Split InteractionId
@@ -82,7 +82,8 @@ drawUI st = [ui]
         , case st^.focus of
             UserInput ii -> str (replicate 5 '\n')
             TopLevel     -> D.renderDialog (st^.topDialog)  emptyWidget
-            HoleLevel ii -> D.renderDialog (st^.holeDialog) (str $ "Hole " ++ show ii ++ "\n") 
+            HoleLevel ii -> D.renderDialog (st^.holeDialog) (str $ "Hole " ++ show ii ++ "\n")
+            Done         -> D.renderDialog doneDialog  emptyWidget
         , str " "
         , vLimit 1 $ e1
         , str " "
@@ -92,28 +93,33 @@ drawUI st = [ui]
         , str " "
         , case st^.focus of
                UserInput _ -> str "Esc to go back."
-               TopLevel    -> str "Esc to quit."
+               TopLevel    -> str "q to quit the app."
+               Done        -> str "q to quit the app."
                HoleLevel _ -> str "Esc to go back."]
 
 
 holeLevelDialog :: D.Dialog HoleCommand
 holeLevelDialog =
-  D.dialog Nothing (Just (0, commands)) 80
+  D.dialog Nothing (Just (0, commands)) 90
     where commands =
-            [("Help" , CmdHoleHelp )
-            ,("Type" , CmdHoleType )
-            ,("Context", CmdHoleContext)
-            ,("Refine", CmdRefine)
-            ,("Split", CmdSplit)
-            ,("Hint", CmdHoleHint)]
+            [("[H]elp" , CmdHoleHelp )
+            ,("[T]ype" , CmdHoleType )
+            ,("[C]ontext", CmdHoleContext)
+            ,("[R]efine", CmdRefine)
+            ,("[S]plit", CmdSplit)
+            ,("H[i]nt", CmdHoleHint)]
 
+doneDialog :: D.Dialog ()
+doneDialog =
+  D.dialog Nothing (Just (0, commands)) 90
+    where commands = [("Congratulations! You finished the exercise.",())]
 
 topLevelDialog :: D.Dialog TopCommand
 topLevelDialog =
   D.dialog Nothing (Just (0, commands)) 50
-    where commands = [("Help", CmdTopHelp)
-                     ,("Select hole",CmdTopSelect)
-                     ,("Undo", CmdTopUndo)]
+    where commands = [("[H]elp", CmdTopHelp)
+                     ,("[S]elect hole",CmdTopSelect)
+                     ,("[U]ndo", CmdTopUndo)]
 
 appEvent :: St -> V.Event -> T.EventM Name (T.Next St)
 appEvent st ev =
@@ -144,12 +150,20 @@ appEvent st ev =
                            (,) <$> MI.refineUser ii input
                                <*> MI.prettyProgram)
               case r of
-                Right ((feedback,newProg),newState) ->
-                  M.continue (st & focus .~ TopLevel
-                                 & edit .~ editor
-                                 & exProg .~ newProg
-                                 & exState .~ newState
-                                 & userDialog .~ unlines feedback)
+                Right ((feedback,newProg),newState) -> do
+                  (ips,_) <- liftIO $ MI.runExerciseM (view exEnv st) newState
+                                        MI.currentInteractionPoints
+                  if null ips
+                     then M.continue (st & focus .~ Done
+                                         & edit .~ editor
+                                         & exProg .~ newProg
+                                         & exState .~ newState
+                                         & userDialog .~ unlines feedback)
+                     else M.continue (st & focus .~ TopLevel
+                                         & edit .~ editor
+                                         & exProg .~ newProg
+                                         & exState .~ newState
+                                         & userDialog .~ unlines feedback)
                 Left e ->
                   M.continue (st & focus .~ HoleLevel ii
                                  & edit .~ editor
@@ -162,12 +176,20 @@ appEvent st ev =
                             (,) <$> MI.splitUser ii var
                                 <*> MI.prettyProgram)
               case r of
-                Right ((feedback,newProg),newState) ->
-                  M.continue (st & focus .~ TopLevel
-                                 & edit .~ editor
-                                 & exProg .~ newProg
-                                 & exState .~ newState
-                                 & userDialog .~ unlines feedback)
+                Right ((feedback,newProg),newState) -> do
+                  (ips,_) <- liftIO $ MI.runExerciseM (view exEnv st) newState
+                                        MI.currentInteractionPoints
+                  if null ips
+                     then M.continue (st & focus .~ Done
+                                         & edit .~ editor
+                                         & exProg .~ newProg
+                                         & exState .~ newState
+                                         & userDialog .~ unlines feedback)
+                     else M.continue (st & focus .~ TopLevel
+                                         & edit .~ editor
+                                         & exProg .~ newProg
+                                         & exState .~ newState
+                                         & userDialog .~ unlines feedback)
                 Left e ->
                   M.continue (st & focus .~ HoleLevel ii
                                  & edit .~ editor
@@ -184,7 +206,13 @@ appEvent st ev =
       case ev of
         V.EvKey V.KEnter [] -> do
           execTopCmd (D.dialogSelection (st^.topDialog)) st >>= M.continue
-        V.EvKey V.KEsc [] -> M.halt st
+        V.EvKey (V.KChar 'q') [] -> M.halt st
+        V.EvKey (V.KChar 'h') [] ->
+          execTopCmd (Just CmdTopHelp) st >>= M.continue
+        V.EvKey (V.KChar 's') [] ->
+          execTopCmd (Just CmdTopSelect) st >>= M.continue
+        V.EvKey (V.KChar 'u') [] ->
+          execTopCmd (Just CmdTopUndo) st >>= M.continue
         _ -> do
           newDialog <- D.handleDialogEvent ev (st^.topDialog)
           M.continue (st & topDialog .~ newDialog)
@@ -193,11 +221,27 @@ appEvent st ev =
       case ev of
         V.EvKey V.KEnter [] -> do
           execHoleCmd (D.dialogSelection (st^.holeDialog)) st >>= M.continue
+        V.EvKey (V.KChar 'h') [] ->
+          execHoleCmd (Just CmdHoleHelp) st >>= M.continue
+        V.EvKey (V.KChar 't') [] ->
+          execHoleCmd (Just CmdHoleType) st >>= M.continue
+        V.EvKey (V.KChar 'c') [] ->
+          execHoleCmd (Just CmdHoleContext) st >>= M.continue
+        V.EvKey (V.KChar 'r') [] ->
+          execHoleCmd (Just CmdRefine) st >>= M.continue
+        V.EvKey (V.KChar 's') [] ->
+          execHoleCmd (Just CmdSplit) st >>= M.continue
+        V.EvKey (V.KChar 'i') [] ->
+          execHoleCmd (Just CmdHoleHint) st >>= M.continue
         V.EvKey V.KEsc [] -> M.continue (st & focus .~ TopLevel
                                             & userDialog .~ "")
         _ -> do
           newDialog <- D.handleDialogEvent ev (st^.holeDialog)
           M.continue (st & holeDialog .~ newDialog)
+    Done ->
+      case ev of
+        V.EvKey (V.KChar 'q') [] -> M.halt st
+        _ -> M.continue st
 
 execHoleCmd :: Maybe HoleCommand -> St -> T.EventM Name St
 execHoleCmd Nothing st = return st
