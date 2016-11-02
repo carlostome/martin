@@ -1,7 +1,7 @@
-{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell       #-}
 module AgdaApp where
 
 import qualified Martin.Agda.Util           as AU
@@ -12,11 +12,12 @@ import           Agda.Syntax.Common
 import           Control.Exception          as E
 import           Control.Lens
 import           Control.Monad.IO.Class
-import           Control.Monad.State.Strict
 import           Control.Monad.Reader
+import           Control.Monad.State.Strict
 import           Data.List                  (isPrefixOf)
+import           Data.Maybe
 import           Text.Printf
-import           Text.Read (readMaybe)
+import           Text.Read                  (readMaybe)
 
 import qualified Brick.AttrMap              as Brick
 import qualified Brick.Main                 as Brick
@@ -62,12 +63,13 @@ data Action = Select | Refine InteractionId | Split InteractionId
 
 
 data UIState = UIState
-  { _uiMiniBuffer :: Brick.Editor String UIName
-  , _uiMode        :: UIMode
-  , _uiProgramText :: String
-  , _uiInfoText    :: String
-  , _uiTopLevelBtn :: B.ButtonList TopCommand
-  , _uiHoleBtn     :: B.ButtonList HoleCommand
+  { _uiMiniBuffer      :: Brick.Editor String UIName
+  , _uiMode            :: UIMode
+  , _uiProgramText     :: String
+  , _uiInfoText        :: String
+  , _uiTopLevelBtn     :: B.ButtonList TopCommand
+  , _uiHoleBtn         :: B.ButtonList HoleCommand
+  , _uiProgramTextSize :: Maybe (Int, Int)
   }
 
 makeLenses ''UIState
@@ -92,56 +94,68 @@ type StatefulHandler s n = StateT s (Brick.EventM n)
 statefulHandler :: (e -> StatefulHandler s n (StateNext s)) -> s -> e -> Brick.EventM n (Brick.Next s)
 statefulHandler f s e = runStateT (f e) s >>= \(nxt, s') ->
   case nxt of
-    Continue -> Brick.continue s'
-    Halt -> Brick.halt s'
+    Continue  -> Brick.continue s'
+    Halt      -> Brick.halt s'
     RunIO act -> Brick.suspendAndResume (act s')
 
 type MartinHandler = StatefulHandler AppState UIName
 
 drawUI :: UIState -> [Brick.Widget UIName]
-drawUI st = [ui]
-    where
-      programView = Brick.hCenter $ Brick.border $
-        Brick.viewport ProgramViewport Brick.Both $ Brick.str $ st ^. uiProgramText
+drawUI st = [ui] where
+  programView = Brick.hCenter $ Brick.border $
+    Brick.viewport ProgramViewport Brick.Both $ Brick.str $ st ^. uiProgramText
 
-      infoBox = let txt = st ^. uiInfoText
-                in if null txt
-                   then Brick.emptyWidget
-                   else Brick.hCenter $ Brick.str txt
+  infoBox = case st ^. uiInfoText of
+    [] -> Brick.emptyWidget
+    txt -> Brick.hCenter $ Brick.str txt
 
-      miniBufferLabel a = case a of
-        Select -> "Hole: "
-        Refine _ -> "Expression: "
-        Split _ -> "Variable: "
+  miniBufferLabel a = case a of
+    Select   -> "Hole: "
+    Refine _ -> "Expression: "
+    Split _  -> "Variable: "
 
-      interactionLine = Brick.border $ case st ^. uiMode of
-        UserInput a  -> Brick.str (miniBufferLabel a) Brick.<+> Brick.renderEditor True (st ^. uiMiniBuffer)
-        TopLevel     -> Brick.hCenter $ B.renderButtonList (st ^. uiTopLevelBtn)
-        HoleLevel ii -> Brick.hCenter $ B.renderButtonList (st ^. uiHoleBtn)
-        Done         -> Brick.hCenter $ Brick.str "Congratulations, you have solved the exercise! Press q to exit."
+  interactionLine = Brick.border $ case st ^. uiMode of
+    UserInput a  -> Brick.str (miniBufferLabel a) Brick.<+> Brick.renderEditor True (st ^. uiMiniBuffer)
+    TopLevel     -> Brick.hCenter $ B.renderButtonList (st ^. uiTopLevelBtn)
+    HoleLevel ii -> Brick.hCenter $ Brick.str (printf "Hole %s: "(show ii))
+      Brick.<+> B.renderButtonList (st ^. uiHoleBtn)
+    Done         -> Brick.hCenter $ Brick.str "Congratulations, you have solved the exercise! Press q to exit."
 
-      ui = Brick.vBox
-        [ programView
-        , infoBox
-        , interactionLine
-        ]
+  ui = Brick.vBox
+       [ programView
+       , infoBox
+       , interactionLine
+       ]
 
 -- * Event Handler
 
 appEvent :: AppState -> Vty.Event -> Brick.EventM UIName (Brick.Next AppState)
-appEvent = statefulHandler dispatch where
-  dispatch evt = case evt of
-    Vty.EvKey Vty.KUp [] -> do
-      lift $ Brick.vScrollBy (Brick.viewportScroll ProgramViewport) (-1)
-      return Continue
-    Vty.EvKey Vty.KDown [] -> do
-      lift $ Brick.vScrollBy (Brick.viewportScroll ProgramViewport) 1
-      return Continue
-    _ -> use (appStateUI . uiMode) >>= \case
-      UserInput a  -> userInputEvent a evt >> return Continue
-      TopLevel     -> topLevelEvent evt
-      HoleLevel ii -> holeLevelEvent ii evt
-      Done         -> doneEvent evt
+appEvent = statefulHandler handle where
+  handle evt = do
+    checkSize <- uses (appStateUI . uiProgramTextSize) isNothing
+    when checkSize updateViewportSize
+    case evt of
+      Vty.EvKey Vty.KUp [] -> do
+        lift $ Brick.vScrollBy (Brick.viewportScroll ProgramViewport) (-1)
+        return Continue
+      Vty.EvKey Vty.KDown [] -> do
+        lift $ Brick.vScrollBy (Brick.viewportScroll ProgramViewport) 1
+        return Continue
+      Vty.EvResize _ _ -> do
+        updateViewportSize
+        dispatch evt
+      _ -> dispatch evt
+
+  updateViewportSize = do
+    vp <- lift $ Brick.lookupViewport ProgramViewport
+    appStateUI . uiProgramTextSize .= firstOf (_Just . Brick.vpSize) vp
+    updateProgramText
+
+  dispatch evt = use (appStateUI . uiMode) >>= \case
+    UserInput a  -> userInputEvent a evt >> return Continue
+    TopLevel     -> topLevelEvent evt
+    HoleLevel ii -> holeLevelEvent ii evt
+    Done         -> doneEvent evt
 
 userInputEvent :: Action -> Vty.Event -> MartinHandler ()
 userInputEvent a ev = case ev of
@@ -151,9 +165,9 @@ userInputEvent a ev = case ev of
   Vty.EvKey Vty.KEsc [] ->
     zoom appStateUI $ do
       uiMode .= case a of
-        Select -> TopLevel
+        Select    -> TopLevel
         Refine ii -> HoleLevel ii
-        Split ii -> HoleLevel ii
+        Split ii  -> HoleLevel ii
       uiMiniBuffer .= miniBuffer
       uiInfoText .= ""
   _ -> do
@@ -163,20 +177,22 @@ userInputEvent a ev = case ev of
 
 topLevelEvent :: Vty.Event -> MartinHandler (StateNext AppState)
 topLevelEvent ev = do
-  bl <- appStateUI . uiTopLevelBtn <%= B.handleButtonListEvent ev
+  appStateUI . uiTopLevelBtn %= B.handleButtonListEvent ev
+  bl <- use $ appStateUI . uiTopLevelBtn
   case B.activateButtons ev bl of
-    Nothing -> return Continue
+    Nothing  -> return Continue
     Just cmd -> execTopCmd cmd
 
 holeLevelEvent :: InteractionId -> Vty.Event -> MartinHandler (StateNext AppState)
 holeLevelEvent ii ev = do
-  bl <- appStateUI . uiHoleBtn <%= B.handleButtonListEvent ev
+  appStateUI . uiHoleBtn %= B.handleButtonListEvent ev
+  bl <- use $ appStateUI . uiHoleBtn
   Continue <$ forM_ (B.activateButtons ev bl) (execHoleCmd ii)
 
 doneEvent :: Vty.Event -> MartinHandler (StateNext AppState)
 doneEvent ev = case ev of
   Vty.EvKey (Vty.KChar 'q') [] -> return Halt
-  _ -> return Continue
+  _                            -> return Continue
 
 -- | Called when the user pressed enter in the mini buffer.
 miniBufferAction :: Action -> String -> MartinHandler ()
@@ -222,12 +238,12 @@ miniBufferChanged Select input = do
   ips <- liftEx MI.currentInteractionPoints
   case filter (isPrefixOf input . show . interactionId) ips of
     [ii] -> selectHole ii
-    _ -> return ()
+    _    -> return ()
 miniBufferChanged (Split ii) input = do
   vars <- liftEx $ MI.localVariables ii
   case filter (isPrefixOf input) vars of
     [v] | v == input -> miniBufferAction (Split ii) v
-    _ -> return ()
+    _   -> return ()
 miniBufferChanged _ _ = return ()
 
 selectHole :: InteractionId -> MartinHandler ()
@@ -308,7 +324,10 @@ liftExCatch ex = do
       return $ Right a
 
 updateProgramText :: (MonadIO m) => StateT AppState m ()
-updateProgramText = liftEx MI.prettyProgram >>= assign (appStateUI . uiProgramText)
+updateProgramText = do
+  (w,_) <- uses (appStateUI . uiProgramTextSize) (fromMaybe (100,25))
+  txt <- liftEx $ MI.prettyProgram w
+  appStateUI . uiProgramText .= txt
 
 -- * UI Component Definitions
 
@@ -369,6 +388,7 @@ mkInitialState exEnv exState = AppState
     , _uiInfoText    = ""
     , _uiTopLevelBtn = topLevelButtons
     , _uiHoleBtn     = holeLevelButtons
+    , _uiProgramTextSize = Nothing
     }
   , _appStateEx = ExState exState exEnv
   }

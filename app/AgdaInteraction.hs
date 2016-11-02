@@ -7,9 +7,9 @@
 {-# LANGUAGE UndecidableInstances  #-}
 module AgdaInteraction where
 
-import qualified Agda.Interaction.BasicOps                  as B
-import qualified Agda.Syntax.Abstract                       as A
-import qualified Agda.Syntax.Abstract.Pretty                as A
+import qualified Agda.Interaction.BasicOps       as B
+import qualified Agda.Syntax.Abstract            as A
+import qualified Agda.Syntax.Abstract.Pretty     as A
 import           Agda.Syntax.Common
 import           Agda.TypeChecking.Monad
 import           Agda.Utils.Pretty
@@ -19,15 +19,16 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           System.Console.Haskeline
-import qualified System.Console.Haskeline                   as HaskEx
-import qualified Text.ParserCombinators.ReadP               as ReadP
-import qualified Text.ParserCombinators.ReadPrec            as ReadPrec
+import qualified System.Console.Haskeline        as HaskEx
+import           System.Console.Terminal.Size    (Window (..), size)
+import qualified Text.ParserCombinators.ReadP    as ReadP
+import qualified Text.ParserCombinators.ReadPrec as ReadPrec
 import           Text.Printf
-import           Text.Read                                  (readPrec)
+import           Text.Read                       (readPrec)
 
-import qualified Martin.Agda.Util                           as AU
+import qualified Martin.Agda.Util                as AU
 import           Martin.Interaction
-import qualified Martin.Strategy                            as S
+import qualified Martin.Strategy                 as S
 
 -- | I'm sorry for another Monad stack, but somewhere we need to keep track of
 -- information related to the exercise session.
@@ -51,13 +52,7 @@ runInteractiveSession opts agdaFile = do
         , ""
         ]
 
-      -- print $ view exerciseStrategy exState
-
-      let go = do
-            prettyProgram >>= outputStrLn
-            outputStrLn ""
-            exerciseLoop
-      void $ runStateT (runReaderT (runInputT defaultSettings go) exEnv) exState
+      void $ runStateT (runReaderT (runInputT defaultSettings exerciseLoop) exEnv) exState
 
 -- | The commands a user can perform at the top level interaction loop.
 data TopCommand
@@ -153,7 +148,8 @@ exerciseLoop = do
           ]
         exerciseLoop
       Just CmdTopPrint -> do
-        prettyProgram >>= outputStrLn
+        w <- maybe 80 width <$> liftIO size
+        prettyProgram 80 >>= outputStrLn
         exerciseLoop
 
 -- | Catches prettified TCM errors in the InputT monad, and runs the continuation

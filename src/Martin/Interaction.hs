@@ -256,12 +256,12 @@ checkpoint = do
 -- It also shows the numbers (InteractionId) of each hole. Based on that, the user can then
 -- choose to perform an action on a given hole.
 prettyProgram :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
-              => m String
-prettyProgram = do
+              => Int -> m String
+prettyProgram width = do
   prog <- use exerciseProgram
   fmap fst $ runTCMEx (view S.programTCState prog) $ do
     let decls = AU.setMetaNumbersToInteraction (view S.programDecls prog)
-    render . vcat <$> mapM prettyA decls
+    renderStyle style { lineLength = width } . vcat <$> mapM prettyA decls
 
 -- | Runs a TCM computation inside the exercise monad.
 -- All TCErr exceptions are converted to PrettyTCErr exceptions before

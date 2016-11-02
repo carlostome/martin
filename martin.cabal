@@ -63,6 +63,7 @@ executable martin-exe
                      , validation
                      , brick
                      , vty
+                     , terminal-size
   default-language:    Haskell2010
 
 test-suite martin-test
