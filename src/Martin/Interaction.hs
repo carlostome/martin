@@ -196,15 +196,9 @@ checkProgramAndUpdate :: (MonadState ExerciseState m, MonadReader ExerciseEnv m,
                       => [A.Declaration] -> m ()
 checkProgramAndUpdate newDecls = do
   tcs <- view exerciseTCState
-  (newDecls', progState) <- runTCMEx tcs $ do
-    -- rebuild interaction points (normally only created when going from concrete -> abstract)
-    (newDecls', _) <- AU.rebuildInteractionPoints newDecls
-    -- check updated AST (might not succeed if the termination checker intervenes)
-    checkDecls newDecls'
-    unfreezeMetas
-    return newDecls'
+  ((newProg, _), _) <- runTCMEx tcs $ S.checkProgram newDecls
   checkpoint
-  exerciseProgram .= S.StatefulProgram newDecls' progState
+  exerciseProgram .= newProg
 
 -- | Regenerates the strategy for the current program state.
 regenerateStrategy :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m) => m ()

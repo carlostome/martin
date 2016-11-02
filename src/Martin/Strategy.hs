@@ -12,6 +12,7 @@ import           Agda.Syntax.Common
 import qualified Agda.Syntax.Internal         as I
 import           Agda.Syntax.Position
 import           Agda.TheTypeChecker
+import           Agda.TypeChecking.Errors
 import           Agda.TypeChecking.Monad
 import           Agda.Utils.FileName
 import           Agda.Utils.Monad             hiding (ifM)
@@ -29,6 +30,7 @@ import           Text.Printf
 
 import qualified Martin.Agda.MakeCaseModified as MC
 import qualified Martin.Agda.Util             as AU
+import qualified Martin.Agda.Lens             as AL
 import qualified Martin.Auto.ProofSearch      as P
 import           Martin.Auto.SearchTree
 import           Martin.Auto.Translation
@@ -162,11 +164,7 @@ trySolution prog ii proof = do
   -- Replace the hole in the old program with the new expression.
   let newProg = views programDecls (AU.replaceHole ii expr) prog
   -- Try to typecheck the new program.
-  fmap fst . runTCMSearchFresh $ do
-    (ds, _) <- AU.rebuildInteractionPoints newProg
-    checkDecls ds
-    unfreezeMetas
-    return proof
+  proof <$ runTCMSearchFresh (checkProgram newProg)
 
 -- | Try splitting on variables given in an InteractionId
 splitStrategy :: StatefulProgram
@@ -182,19 +180,13 @@ splitSingleVarStrategy prog ii var = do
   debugPrint ("splitting on var: " ++ var)
   ((_, newClauses),_) <- runTCMSearch (view programTCState prog) $ MC.makeCase ii noRange var
   debugPrint ("new clauses: " ++ show newClauses)
-  ((newDecls, oldMetas),tcs) <- runTCMSearchFresh $ do
-     (interactionDecls, oldMetas) <- AU.rebuildInteractionPoints (views programDecls (AU.replaceClauses ii newClauses) prog)
-     checkDecls interactionDecls
-     unfreezeMetas
-     return (interactionDecls,oldMetas)
-  let newProg = StatefulProgram
-        { _programDecls = newDecls
-        , _programTCState = tcs
-        }
-  let newMetas = [ newii | A.QuestionMark _ newii <- concatMap universeBi newDecls
-                         , newii `notElem` oldMetas ]
+  ((newProg, oldMetas),_) <- runTCMSearchFresh $
+    checkProgram (views programDecls (AU.replaceClauses ii newClauses) prog)
+  let newMetas = toListOf (programDecls . traverse . AL.questionMarks . _2 . filtered (`notElem` oldMetas)) newProg
   SplitStrategy var <$> mapM (proofSearchStrategy newProg) newMetas
 
+-- | Runs a TCM computation in our Search Monad starting with some state.
+--   Errors are converted to mzero.
 runTCMSearch :: TCState -> TCM a -> Search (a, TCState)
 runTCMSearch tcs tcm = do
   tce <- view initialTCEnv
@@ -205,30 +197,92 @@ runTCMSearch tcs tcm = do
       mzero
     Right v -> return v
 
+-- | Runs a TCM computation inside our Search Monad using the initial state from the environment.
 runTCMSearchFresh :: TCM a -> Search (a, TCState)
 runTCMSearchFresh tcm = view initialTCState >>= flip runTCMSearch tcm
+
+-- | Runs a TCM computation in an arbitrary Monad supporting IO and errors.
+--   At the boundary, TCM exceptions are prettified and passed upwards as a string.
+runTCMError :: (MonadError String m, MonadIO m) => TCEnv -> TCState -> TCM a -> m (a, TCState)
+runTCMError tce tcs tcm = do
+  (r, tcs') <- liftIO $ runTCM tce tcs $ (Right <$> tcm) `catchError` (\(e :: TCErr) -> Left <$> prettyError e)
+  case r of
+    Left e  -> throwError e
+    Right v -> return (v, tcs')
 
 -- | Generate a Strategy given a list of Declaration.
 -- This is the top level function.
 generateStrategy :: [A.Declaration] -> Search ExerciseStrategy
-generateStrategy prog = do
-  ((newDecls, impState), tcs') <- runTCMSearchFresh $ do
-    AU.importAllAbstract prog
-    imported <- get -- get a snapshot of the state after importing our stuff
-    (newDecl,_) <- AU.rebuildInteractionPoints prog
-    checkDecls newDecl
-    unfreezeMetas
-    return (newDecl, imported)
-  let metas = [ ii | A.QuestionMark _ ii <- concatMap universeBi newDecls]
-      sprog = StatefulProgram newDecls tcs'
-  debugPrint ("Generate strategy for metas: " ++ show metas)
-  -- use the import snapshot as the new original state
-  local (initialTCState .~ impState) $
+generateStrategy prog = prepareState prog contFail contSuccess where
+  contFail _ = mzero
+  contSuccess sprog = do
+    let metas = toListOf (programDecls . traverse . AL.questionMarks . _2) sprog
+    debugPrint ("Generate strategy for metas: " ++ show metas)
     mapM (lift . runMaybeT . proofSearchStrategy sprog) metas
 
-data Session = Session
-  { buildStrategy :: [A.Declaration] -> IO (Maybe ExerciseStrategy) }
+-- | Applies a strategy to solve a given program. Guarantees that the resulting program type-checks.
+applyStrategy' :: [A.Declaration] -> ExerciseStrategy -> ExceptT String (ReaderT SearchEnvironment IO) [A.Declaration]
+applyStrategy' decls strat = view programDecls <$> prepareState decls throwError (go 0 strat) where
+  go _ [] prog = return prog
+  -- if the strategy doesn't know how to solve a hole, skip it.
+  -- The 'skip' argument keeps track of how many holes have been skipped so far, to correctly compute interaction ids
+  go skip (Nothing : rest) prog = go (skip + 1) rest prog
+  go skip (Just st : rest) prog = do
+    tce <- view initialTCEnv
+    itcs <- view initialTCState
+    let ii = InteractionId skip
+    case st of
+      SplitStrategy var cs -> do
+        ((_, newClauses),_) <- runTCMError tce (view programTCState prog) $ MC.makeCase ii noRange var
+        ((sprog, _),_) <- runTCMError tce itcs $ checkProgram (AU.replaceClauses ii newClauses $ view programDecls prog)
+        go skip (map Just cs ++ rest) sprog
+      RefineStrategy prf -> do
+        (expr, _) <- runTCMError tce (view programTCState prog) $ B.parseExprIn ii noRange (P.proofToStr prf)
+        ((sprog, _),_) <- runTCMError tce itcs $ checkProgram (AU.replaceHole ii expr $ view programDecls prog)
+        go skip rest sprog
 
+-- | Initially prepares the Agda state by type checking the given program
+--   and processing all import statements.
+prepareState :: (MonadReader SearchEnvironment m, MonadIO m)
+             => [A.Declaration] -- ^ the initial, unchecked program
+             -> (String -> m a) -- ^ a failure continuation
+             -> (StatefulProgram -> m a)
+                -- ^ a success continuation receiving a checked program and
+                -- a modified initial state in the environment containing imported declarations
+             -> m a
+prepareState prog contFail contSuccess = do
+  tce <- view initialTCEnv
+  tcs <- view initialTCState
+  ret <- runExceptT $ runTCMError tce tcs $ do
+    AU.importAllAbstract prog
+    imported <- get -- get a snapshot of the state after importing our stuff
+    (sprog, _) <- checkProgram prog
+    return (sprog, imported)
+  case ret of
+    Left e -> contFail e
+    Right ((sprog, impState), _) ->
+      -- use the import snapshot as the new original state
+      local (initialTCState .~ impState) $ contSuccess sprog
+
+-- | Checks the declarations and returns a program associated with the type-checked TCState
+--   and a list of the old interaction points.
+checkProgram :: [A.Declaration] -> TCM (StatefulProgram, [InteractionId])
+checkProgram decls = do
+  (interactionDecls, oldMetas) <- AU.rebuildInteractionPoints decls
+  checkDecls interactionDecls
+  unfreezeMetas
+  sprog <- StatefulProgram interactionDecls <$> get
+  return (sprog,oldMetas)
+
+-- | A session encapsulates some state and provides a high level interface for interacting with Agda.
+data Session = Session
+  { buildStrategy :: [A.Declaration] -> IO (Maybe ExerciseStrategy)
+    -- ^ Builds a strategy for the given program.
+  , applyStrategy :: [A.Declaration] -> ExerciseStrategy -> IO (Either String [A.Declaration])
+    -- ^ Applies a strategy to solve a program. Guarantees that the resulting program type-checks.
+  }
+
+-- | Initializes an Agda session working on a file.
 initSession :: AU.AgdaOptions -> AbsolutePath -> IO Session
 initSession opts path = do
   (tcmState,_) <- runTCM initEnv initState $ AU.initAgda opts
@@ -240,6 +294,7 @@ initSession opts path = do
         , _debugMode       = False
         }
   return Session
-     { buildStrategy = \decls -> runReaderT (runMaybeT $ generateStrategy decls) env }
+     { buildStrategy = \decls -> runReaderT (runMaybeT $ generateStrategy decls) env
+     , applyStrategy = \decls strat -> runReaderT (runExceptT $ applyStrategy' decls strat) env }
 
 

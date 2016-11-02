@@ -13,21 +13,15 @@ import           Data.Maybe
 import           System.Directory
 import           System.FilePath
 import           Test.Hspec
+import           Text.Printf
 
+import qualified Martin.Agda.Lens        as AL
 import qualified Martin.Agda.Util        as AU
 import qualified Martin.Interaction      as I
 import qualified Martin.Strategy         as S
 
 -- auto-generated module by cabal, used for accessing data files
 import           Paths_martin
-
-universeBiFold :: UniverseBi s t => Fold s t
-universeBiFold = to universeBi . folded
-
-_QuestionMark :: Prism A.Expr A.Expr (MetaInfo, InteractionId) (MetaInfo, InteractionId)
-_QuestionMark = prism' (uncurry A.QuestionMark) $ \e -> case e of
-  A.QuestionMark mi ii -> Just (mi, ii)
-  _                    -> Nothing
 
 initTestExercise :: FilePath -> IO (Either String (I.ExerciseEnv, I.ExerciseState))
 initTestExercise agdaFile = do
@@ -36,13 +30,6 @@ initTestExercise agdaFile = do
         & AU.agdaOptIncludePaths .~ [takeDirectory absFile]
   I.initExercise opts absFile
 
-strategyShouldBe agdaFile strategy = do
-  ret <- initTestExercise agdaFile
-  case ret of
-    Left str -> expectationFailure str
-    Right (exEnv, exState) ->
-      view I.exerciseStrategy exState `shouldBe` strategy
-
 
 canSolve :: FilePath -> IO ()
 canSolve agdaFile = do
@@ -50,11 +37,20 @@ canSolve agdaFile = do
   case ret of
     Left str -> expectationFailure str
     Right (exEnv, exState) -> do
-      let progHoles = toListOf (I.exerciseProgram . S.programDecls . folded . universeBiFold . _QuestionMark) exState
+      let decls = view (I.exerciseProgram . S.programDecls) exState
+          progHoles = toListOf (traverse . AL.questionMarks) decls
           strat = view I.exerciseStrategy exState
       if | length progHoles /= length strat -> expectationFailure "Number of holes and clause strategies differ"
          | any isNothing strat -> expectationFailure "Not all clauses could be solved"
-         | otherwise -> return ()
+         | otherwise -> do
+             -- try if we can actually apply the generated strategy
+             let apply = views I.exerciseSession S.applyStrategy exEnv
+             sol <- apply decls strat
+             case sol of
+               Left str -> expectationFailure $ printf "Could not apply strategy:\n%s" ++ str
+               Right prog
+                 | has (traverse . AL.questionMarks) prog -> expectationFailure "Not all clauses have been solved"
+                 | otherwise -> return ()
 
 testCases :: [(String,FilePath)]
 testCases =
