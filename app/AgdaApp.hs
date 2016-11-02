@@ -25,7 +25,7 @@ import           Brick.Util             (on, bg)
 import qualified Brick.Widgets.Border   as B
 import qualified Brick.Widgets.Center   as C
 import           Brick.Widgets.Core     (hLimit, padBottom, padTop, str, vLimit,
-                                         (<+>), (<=>), emptyWidget)
+                                         (<+>), (<=>), emptyWidget, vBox)
 import qualified Brick.Widgets.Dialog   as D
 import qualified Brick.Widgets.Edit     as E
 import qualified Graphics.Vty           as V
@@ -77,22 +77,23 @@ drawUI st = [ui]
     where
       e1 = F.withFocusRing (F.focusRing [Edit]) E.renderEditor (st^.edit)
 
-      ui = (padBottom T.Max $ C.hCenter  $ str ('\n':'\n' : view exProg st ++ replicate 50 '\n')) <=>
-            str " " <=>
-              (case st^.focus of
-                 UserInput _ -> emptyWidget
-                 TopLevel    -> D.renderDialog (st^.topDialog)  emptyWidget
-                 HoleLevel _ -> D.renderDialog (st^.holeDialog) emptyWidget)
-            <=>
-            str " " <=>
-            (vLimit 1 $ e1) <=>
-            str " " <=>
-            (str (view userDialog st)) <=>
-            str " " <=>
-            (case st^.focus of
-               UserInput _ -> emptyWidget
+      ui = vBox
+        [ C.hCenter  $ str ('\n':'\n' : view exProg st)
+        , case st^.focus of
+            UserInput ii -> str (replicate 5 '\n')
+            TopLevel     -> D.renderDialog (st^.topDialog)  emptyWidget
+            HoleLevel ii -> D.renderDialog (st^.holeDialog) (str $ "Hole " ++ show ii ++ "\n") 
+        , str " "
+        , vLimit 1 $ e1
+        , str " "
+        , {-vLimit 6 $-} str (view userDialog st)
+        , str " "
+        , B.hBorder
+        , str " "
+        , case st^.focus of
+               UserInput _ -> str "Esc to go back."
                TopLevel    -> str "Esc to quit."
-               HoleLevel _ -> str "Esc to go back.")
+               HoleLevel _ -> str "Esc to go back."]
 
 
 holeLevelDialog :: D.Dialog HoleCommand
@@ -292,7 +293,7 @@ topLevelhelp = unlines
           , " "
           , "  We are now in the top level."
           , " "
-          , "  You can either select a hole to work on"
+          , "  You can either selected a hole to work on"
           , "  or undo your last step."
           , " "
           ]
