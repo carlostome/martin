@@ -314,9 +314,10 @@ execTopCmd (Just cmd) st =
     CmdTopHelp   ->
       return $ st & userDialog .~ topLevelhelp
     CmdTopSolve -> do
-      ((feedback, newProg), exSt) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st) $
-                                     (,) <$> MI.solveExercise <*> MI.prettyProgram
-      return $ st & exState .~ exSt
+      ((feedback, newProg, ips), exSt) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st) $
+                                     (,,) <$> MI.solveExercise <*> MI.prettyProgram <*> MI.currentInteractionPoints
+      return $ st & focus .~ (if null ips then Done else TopLevel)
+                  & exState .~ exSt
                   & exProg .~ newProg
                   & userDialog .~ unlines feedback
 
