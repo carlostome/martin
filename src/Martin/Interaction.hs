@@ -164,6 +164,20 @@ refineUser ii def = do
       regenerateStrategy >> return (makeFeedback "I chose to split.")
     _ -> regenerateStrategy >> return (makeFeedback "I didn't know what to do here.")
 
+-- | Solve the exercise for the user.
+solveExercise :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+              => m Feedback
+solveExercise = do
+  decls <- use $ exerciseProgram . S.programDecls
+  strat <- use exerciseStrategy
+  ret <- view exerciseSession >>= \s -> liftIO $ S.applyStrategy s decls strat
+  case ret of
+    Left err -> liftIO $ throwIO $ PrettyTCErr err
+    Right solvedDecls -> do
+      checkProgramAndUpdate solvedDecls
+      regenerateStrategy
+      return $ makeFeedback "I solved the exercise for you."
+
 -- | Given an expression, it checks whether that expression is a prefix of the given
 -- proof and returns the sub-proofs that coincide with question marks in the expression.
 stripPrefixFromProof :: A.Expr -> Ps.Proof -> AccValidation Feedback [Ps.Proof]

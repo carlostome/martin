@@ -40,6 +40,7 @@ data TopCommand
   = CmdTopUndo       -- ^ undo the last split or refine action
   | CmdTopSelect     -- ^ focus on a hole
   | CmdTopHelp       -- ^ print help message
+  | CmdTopSolve      -- ^ solve the exercise for the user
   deriving (Eq, Ord, Show, Read)
 
 -- | The commands a user can perform while being focused on a hole.
@@ -117,10 +118,11 @@ doneDialog =
 
 topLevelDialog :: D.Dialog TopCommand
 topLevelDialog =
-  D.dialog Nothing (Just (0, commands)) 50
+  D.dialog Nothing (Just (0, commands)) 70
     where commands = [("[H]elp", CmdTopHelp)
                      ,("[S]elect hole",CmdTopSelect)
-                     ,("[U]ndo", CmdTopUndo)]
+                     ,("[U]ndo", CmdTopUndo)
+                     ,("S[o]lution", CmdTopSolve)]
 
 appEvent :: St -> V.Event -> T.EventM Name (T.Next St)
 appEvent st ev =
@@ -237,6 +239,8 @@ appEvent st ev =
           execTopCmd (Just CmdTopSelect) st >>= M.continue
         V.EvKey (V.KChar 'u') [] ->
           execTopCmd (Just CmdTopUndo) st >>= M.continue
+        V.EvKey (V.KChar 'o') [] ->
+          execTopCmd (Just CmdTopSolve) st >>= M.continue
         _ -> do
           newDialog <- D.handleDialogEvent ev (st^.topDialog)
           M.continue (st & topDialog .~ newDialog)
@@ -309,6 +313,12 @@ execTopCmd (Just cmd) st =
                  & userDialog .~ "Enter a hole number")
     CmdTopHelp   ->
       return $ st & userDialog .~ topLevelhelp
+    CmdTopSolve -> do
+      ((feedback, newProg), exSt) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st) $
+                                     (,) <$> MI.solveExercise <*> MI.prettyProgram
+      return $ st & exState .~ exSt
+                  & exProg .~ newProg
+                  & userDialog .~ unlines feedback
 
 editor = E.editor Edit (str . unlines) Nothing ""
 
