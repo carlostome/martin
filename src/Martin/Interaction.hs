@@ -10,7 +10,7 @@ module Martin.Interaction where
 
 import qualified Agda.Interaction.BasicOps                  as B
 import qualified Agda.Syntax.Abstract                       as A
-import           Agda.Syntax.Abstract.Pretty
+import           Agda.Syntax.Abstract.Pretty                as A
 import           Agda.Syntax.Common
 import           Agda.Syntax.Position
 import           Agda.Syntax.Translation.ConcreteToAbstract
@@ -306,3 +306,21 @@ initExercise opts agdaFile = do
             , _exerciseHintLevel = 0
             }
       return $ Right (exEnv, exState)
+
+typeOfHole :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+           => InteractionId -> m String
+typeOfHole ii = do
+  tcs <- use $ exerciseProgram . S.programTCState
+  (doc, _) <- runTCMEx tcs $ B.typeOfMeta B.Normalised ii >>= \(B.OfType _ ty) -> A.prettyA ty
+  return $ render doc
+
+contextOfHole :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+              => InteractionId -> m [String]
+contextOfHole ii = do
+  tcs <- use $ exerciseProgram . S.programTCState
+  let prettyCtx (name, ty) = do
+        let pname = pretty $ either id A.qnameName name
+        pty <- A.prettyA ty
+        return $ pname <+> char ':' <+> pty
+  (doc, _) <- runTCMEx tcs $ AU.thingsInScopeWithType ii >>= mapM prettyCtx
+  return $ map render doc

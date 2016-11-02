@@ -51,7 +51,7 @@ runInteractiveSession opts agdaFile = do
         , ""
         ]
 
-      print $ view exerciseStrategy exState
+      -- print $ view exerciseStrategy exState
 
       let go = do
             prettyProgram >>= outputStrLn
@@ -176,18 +176,12 @@ holeLoop ii = do
       holeLoop ii
     Just CmdHoleLeave -> return ()
     Just CmdHoleType -> do
-      tcs <- use $ exerciseProgram . S.programTCState
-      (doc, _) <- runTCMEx tcs $ B.typeOfMeta B.Normalised ii >>= \(B.OfType _ ty) -> A.prettyA ty
-      outputStrLn $ render doc
+      type' <- typeOfHole ii
+      outputStrLn $ type'
       holeLoop ii
     Just CmdHoleContext -> do
-      tcs <- use $ exerciseProgram . S.programTCState
-      let prettyCtx (name, ty) = do
-            let pname = pretty $ either id A.qnameName name
-            pty <- A.prettyA ty
-            return $ pname <+> char ':' <+> pty
-      (doc, _) <- runTCMEx tcs $ AU.thingsInScopeWithType ii >>= mapM prettyCtx
-      outputStrLn $ render $ vcat doc
+      context <- contextOfHole ii
+      mapM_ outputStrLn context
       holeLoop ii
     Just (CmdSplit var) -> do
       splitUser ii var >>= mapM_ outputStrLn
