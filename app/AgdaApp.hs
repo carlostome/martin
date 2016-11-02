@@ -29,6 +29,7 @@ import           Brick.Widgets.Core     (hLimit, padBottom, padTop, str, vLimit,
 import qualified Brick.Widgets.Dialog   as D
 import qualified Brick.Widgets.Edit     as E
 import qualified Graphics.Vty           as V
+import Data.List (isPrefixOf)
 
 --------------------------------------------------------------------------------
 
@@ -199,9 +200,31 @@ appEvent st ev =
           M.continue (st & focus .~ TopLevel
                          & userDialog .~ "")
 
-        _ -> M.continue =<< case F.focusGetCurrent (F.focusRing [Edit]) of
-               Just Edit -> T.handleEventLensed st edit E.handleEditorEvent ev
-               Nothing -> return st
+        _ -> do
+          newSt <- case F.focusGetCurrent (F.focusRing [Edit]) of
+                     Just Edit -> T.handleEventLensed st edit E.handleEditorEvent ev
+                     Nothing -> return st
+          case newSt^.focus of
+            (UserInput Select) -> do
+                  let partialVar = head (E.getEditContents (newSt^.edit))
+                  (ips,_) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
+                                        MI.currentInteractionPoints
+                  let holes = map (\(InteractionId ii) -> show ii) ips
+                  case filter (isPrefixOf partialVar) holes of
+                    []  -> M.continue newSt
+                    [n] -> case readMaybe n of
+                              Nothing ->
+                                M.continue (st & edit .~ editor
+                                               & userDialog .~ ("Hole must be a number!"))
+                              Just n  -> do
+                                let ii = InteractionId n
+                                if ii `elem` ips
+                                  then M.continue (st & focus .~ HoleLevel ii
+                                                      & edit .~ editor
+                                                      & userDialog .~ ("Successfully selected hole " ++ show ii))
+                                  else M.continue (st & edit .~ editor
+                                                      & userDialog .~ ("Hole does not exists!" ))
+                    _   -> M.continue newSt
     TopLevel ->
       case ev of
         V.EvKey V.KEnter [] -> do
