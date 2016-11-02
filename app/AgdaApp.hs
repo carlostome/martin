@@ -1,39 +1,38 @@
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE TemplateHaskell #-}
 module AgdaApp where
 
-import qualified AgdaInteraction        as AI
-import qualified AgdaStrategy           as AS
-import qualified Martin.Agda.Util       as AU
-import qualified Martin.Interaction     as MI
+import qualified Martin.Agda.Util           as AU
+import qualified Martin.Interaction         as MI
 
 import           Agda.Syntax.Common
 
+import           Control.Exception          as E
 import           Control.Lens
-import Control.Exception as E
 import           Control.Monad.IO.Class
-import           Data.Monoid
-import qualified Options.Applicative    as OA
-import           System.IO
+import           Control.Monad.State.Strict
+import           Control.Monad.Reader
+import           Data.List                  (isPrefixOf)
 import           Text.Printf
-import Text.Read
+import           Text.Read (readMaybe)
 
-import qualified Brick.AttrMap          as A
-import qualified Brick.Focus            as F
-import qualified Brick.Main             as M
-import qualified Brick.Types            as T
-import           Brick.Util             (on, bg)
-import qualified Brick.Widgets.Border   as B
-import qualified Brick.Widgets.Center   as C
-import           Brick.Widgets.Core     (hLimit, padBottom, padTop, str, vLimit,
-                                         (<+>), (<=>), emptyWidget, vBox)
-import qualified Brick.Widgets.Dialog   as D
-import qualified Brick.Widgets.Edit     as E
-import qualified Graphics.Vty           as V
-import Data.List (isPrefixOf)
+import qualified Brick.AttrMap              as Brick
+import qualified Brick.Main                 as Brick
+import qualified Brick.Types                as Brick
+import qualified Brick.Util                 as Brick
+import qualified Brick.Widgets.Border       as Brick
+import qualified Brick.Widgets.Center       as Brick
+import qualified Brick.Widgets.Core         as Brick
+import qualified Brick.Widgets.Edit         as Brick
+import qualified Graphics.Vty               as Vty
+
+import qualified Buttons                    as B
 
 --------------------------------------------------------------------------------
 
-data Name = Edit
+data UIName = MiniBuffer | ProgramViewport
           deriving (Ord, Show, Eq)
 
 data TopCommand
@@ -41,6 +40,7 @@ data TopCommand
   | CmdTopSelect     -- ^ focus on a hole
   | CmdTopHelp       -- ^ print help message
   | CmdTopSolve      -- ^ solve the exercise for the user
+  | CmdTopQuit       -- ^ quit the application
   deriving (Eq, Ord, Show, Read)
 
 -- | The commands a user can perform while being focused on a hole.
@@ -51,310 +51,349 @@ data HoleCommand
   | CmdSplit         -- ^ split on the given variable
   | CmdHoleHint      -- ^ print a hint for the hole
   | CmdHoleHelp      -- ^ print a hint for the hole
+  | CmdHoleLeave     -- ^ leave the hole
   deriving (Eq, Ord, Show, Read)
 
-data St =
-    St {
-         _edit          :: E.Editor String Name
-       , _focus         :: Focus
-       , _exState       :: MI.ExerciseState
-       , _exEnv         :: MI.ExerciseEnv
-       , _exProg        :: String
-       , _userDialog    :: String
-       , _topDialog     :: D.Dialog TopCommand
-       , _holeDialog    :: D.Dialog HoleCommand
-       }
-
-data Focus = TopLevel | HoleLevel InteractionId | UserInput Action | Done
+data UIMode = TopLevel | HoleLevel InteractionId | UserInput Action | Done
   deriving (Eq, Show)
 
 data Action = Select | Refine InteractionId | Split InteractionId
   deriving (Eq,Show)
 
 
-makeLenses ''St
+data UIState = UIState
+  { _uiMiniBuffer :: Brick.Editor String UIName
+  , _uiMode        :: UIMode
+  , _uiProgramText :: String
+  , _uiInfoText    :: String
+  , _uiTopLevelBtn :: B.ButtonList TopCommand
+  , _uiHoleBtn     :: B.ButtonList HoleCommand
+  }
 
-drawUI :: St -> [T.Widget Name]
+makeLenses ''UIState
+
+data ExState = ExState
+  { _exState :: MI.ExerciseState
+  , _exEnv   :: MI.ExerciseEnv
+  }
+
+makeLenses ''ExState
+
+data AppState = AppState
+  { _appStateUI :: UIState
+  , _appStateEx :: ExState
+  }
+
+makeLenses ''AppState
+
+data StateNext s = Continue | Halt | RunIO (s -> IO s)
+type StatefulHandler s n = StateT s (Brick.EventM n)
+
+statefulHandler :: (e -> StatefulHandler s n (StateNext s)) -> s -> e -> Brick.EventM n (Brick.Next s)
+statefulHandler f s e = runStateT (f e) s >>= \(nxt, s') ->
+  case nxt of
+    Continue -> Brick.continue s'
+    Halt -> Brick.halt s'
+    RunIO act -> Brick.suspendAndResume (act s')
+
+type MartinHandler = StatefulHandler AppState UIName
+
+drawUI :: UIState -> [Brick.Widget UIName]
 drawUI st = [ui]
     where
-      e1 = F.withFocusRing (F.focusRing [Edit]) E.renderEditor (st^.edit)
+      programView = Brick.hCenter $ Brick.border $
+        Brick.viewport ProgramViewport Brick.Both $ Brick.str $ st ^. uiProgramText
 
-      ui = vBox
-        [ C.hCenter  $ str ('\n':'\n' : view exProg st)
-        , case st^.focus of
-            UserInput ii -> str (replicate 5 '\n')
-            TopLevel     -> D.renderDialog (st^.topDialog)  emptyWidget
-            HoleLevel ii -> D.renderDialog (st^.holeDialog) (str $ "Hole " ++ show ii ++ "\n")
-            Done         -> D.renderDialog doneDialog  emptyWidget
-        , str " "
-        , vLimit 1 $ e1
-        , str " "
-        , {-vLimit 6 $-} str (view userDialog st)
-        , str " "
-        , B.hBorder
-        , str " "
-        , case st^.focus of
-               UserInput _ -> str "Esc to go back."
-               TopLevel    -> str "q to quit the app."
-               Done        -> str "q to quit the app."
-               HoleLevel _ -> str "Esc to go back."]
+      infoBox = let txt = st ^. uiInfoText
+                in if null txt
+                   then Brick.emptyWidget
+                   else Brick.hCenter $ Brick.str txt
 
+      miniBufferLabel a = case a of
+        Select -> "Hole: "
+        Refine _ -> "Expression: "
+        Split _ -> "Variable: "
 
-holeLevelDialog :: D.Dialog HoleCommand
-holeLevelDialog =
-  D.dialog Nothing (Just (0, commands)) 90
-    where commands =
-            [("[H]elp" , CmdHoleHelp )
-            ,("[T]ype" , CmdHoleType )
-            ,("[C]ontext", CmdHoleContext)
-            ,("[R]efine", CmdRefine)
-            ,("[S]plit", CmdSplit)
-            ,("H[i]nt", CmdHoleHint)]
+      interactionLine = Brick.border $ case st ^. uiMode of
+        UserInput a  -> Brick.str (miniBufferLabel a) Brick.<+> Brick.renderEditor True (st ^. uiMiniBuffer)
+        TopLevel     -> Brick.hCenter $ B.renderButtonList (st ^. uiTopLevelBtn)
+        HoleLevel ii -> Brick.hCenter $ B.renderButtonList (st ^. uiHoleBtn)
+        Done         -> Brick.hCenter $ Brick.str "Congratulations, you have solved the exercise! Press q to exit."
 
-doneDialog :: D.Dialog ()
-doneDialog =
-  D.dialog Nothing (Just (0, commands)) 90
-    where commands = [("Congratulations! You finished the exercise.",())]
+      ui = Brick.vBox
+        [ programView
+        , infoBox
+        , interactionLine
+        ]
 
-topLevelDialog :: D.Dialog TopCommand
-topLevelDialog =
-  D.dialog Nothing (Just (0, commands)) 70
-    where commands = [("[H]elp", CmdTopHelp)
-                     ,("[S]elect hole",CmdTopSelect)
-                     ,("[U]ndo", CmdTopUndo)
-                     ,("S[o]lution", CmdTopSolve)]
+-- * Event Handler
 
-appEvent :: St -> V.Event -> T.EventM Name (T.Next St)
-appEvent st ev =
-  case st^.focus of
-    UserInput a ->
-      case ev of
-        V.EvKey V.KEnter [] ->
-          case a of
-            Select -> do
-              case readMaybe (head (E.getEditContents (st^.edit))) of
-                Nothing ->
-                  M.continue (st & edit .~ editor
-                                 & userDialog .~ ("Hole must be a number!"))
-                Just n  -> do
-                    let ii = InteractionId n
-                    (ips,newState) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
-                                        MI.currentInteractionPoints
-                    if ii `elem` ips
-                       then M.continue (st & focus .~ HoleLevel ii
-                                           & edit .~ editor
-                                           & userDialog .~ ("Successfully selected hole " ++ show ii))
-                       else M.continue (st & edit .~ editor
-                                           & userDialog .~ ("Hole does not exists!" ))
-            Refine ii -> do
-              let input = head (E.getEditContents (st^.edit))
-              r  <- liftIO $ E.try $ MI.runExerciseM (view exEnv st) (view exState st)
-                          (MI.exerciseHintLevel .= 0 >>
-                           (,) <$> MI.refineUser ii input
-                               <*> MI.prettyProgram)
-              case r of
-                Right ((feedback,newProg),newState) -> do
-                  (ips,_) <- liftIO $ MI.runExerciseM (view exEnv st) newState
-                                        MI.currentInteractionPoints
-                  if null ips
-                     then M.continue (st & focus .~ Done
-                                         & edit .~ editor
-                                         & exProg .~ newProg
-                                         & exState .~ newState
-                                         & userDialog .~ unlines feedback)
-                     else M.continue (st & focus .~ TopLevel
-                                         & edit .~ editor
-                                         & exProg .~ newProg
-                                         & exState .~ newState
-                                         & userDialog .~ unlines feedback)
-                Left e ->
-                  M.continue (st & focus .~ HoleLevel ii
-                                 & edit .~ editor
-                                 & userDialog .~ MI.getPrettyTCErr e)
+appEvent :: AppState -> Vty.Event -> Brick.EventM UIName (Brick.Next AppState)
+appEvent = statefulHandler dispatch where
+  dispatch evt = case evt of
+    Vty.EvKey Vty.KUp [] -> do
+      lift $ Brick.vScrollBy (Brick.viewportScroll ProgramViewport) (-1)
+      return Continue
+    Vty.EvKey Vty.KDown [] -> do
+      lift $ Brick.vScrollBy (Brick.viewportScroll ProgramViewport) 1
+      return Continue
+    _ -> use (appStateUI . uiMode) >>= \case
+      UserInput a  -> userInputEvent a evt >> return Continue
+      TopLevel     -> topLevelEvent evt
+      HoleLevel ii -> holeLevelEvent ii evt
+      Done         -> doneEvent evt
 
-            Split ii -> do
-              let var = head (E.getEditContents (st^.edit))
-              r <- liftIO $ E.try $ MI.runExerciseM (view exEnv st) (view exState st)
-                          (MI.exerciseHintLevel .= 0 >>
-                            (,) <$> MI.splitUser ii var
-                                <*> MI.prettyProgram)
-              case r of
-                Right ((feedback,newProg),newState) -> do
-                  (ips,_) <- liftIO $ MI.runExerciseM (view exEnv st) newState
-                                        MI.currentInteractionPoints
-                  if null ips
-                     then M.continue (st & focus .~ Done
-                                         & edit .~ editor
-                                         & exProg .~ newProg
-                                         & exState .~ newState
-                                         & userDialog .~ unlines feedback)
-                     else M.continue (st & focus .~ TopLevel
-                                         & edit .~ editor
-                                         & exProg .~ newProg
-                                         & exState .~ newState
-                                         & userDialog .~ unlines feedback)
-                Left e ->
-                  M.continue (st & focus .~ HoleLevel ii
-                                 & edit .~ editor
-                                 & userDialog .~ MI.getPrettyTCErr e)
+userInputEvent :: Action -> Vty.Event -> MartinHandler ()
+userInputEvent a ev = case ev of
+  Vty.EvKey Vty.KEnter [] -> do
+    text <- uses (appStateUI . uiMiniBuffer) (concat . Brick.getEditContents)
+    miniBufferAction a text
+  Vty.EvKey Vty.KEsc [] ->
+    zoom appStateUI $ do
+      uiMode .= case a of
+        Select -> TopLevel
+        Refine ii -> HoleLevel ii
+        Split ii -> HoleLevel ii
+      uiMiniBuffer .= miniBuffer
+      uiInfoText .= ""
+  _ -> do
+    zoom (appStateUI . uiMiniBuffer) $ modifyM (lift . Brick.handleEditorEvent ev)
+    text <- uses (appStateUI . uiMiniBuffer) (concat . Brick.getEditContents)
+    miniBufferChanged a text
 
-        V.EvKey V.KEsc [] ->
-          M.continue (st & focus .~ TopLevel
-                         & userDialog .~ "")
+topLevelEvent :: Vty.Event -> MartinHandler (StateNext AppState)
+topLevelEvent ev = do
+  bl <- appStateUI . uiTopLevelBtn <%= B.handleButtonListEvent ev
+  case B.activateButtons ev bl of
+    Nothing -> return Continue
+    Just cmd -> execTopCmd cmd
 
-        _ -> do
-          newSt <- case F.focusGetCurrent (F.focusRing [Edit]) of
-                     Just Edit -> T.handleEventLensed st edit E.handleEditorEvent ev
-                     Nothing -> return st
-          case newSt^.focus of
-            (UserInput Select) -> do
-                  let partialVar = head (E.getEditContents (newSt^.edit))
-                  (ips,_) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
-                                        MI.currentInteractionPoints
-                  let holes = map (\(InteractionId ii) -> show ii) ips
-                  case filter (isPrefixOf partialVar) holes of
-                    []  -> M.continue newSt
-                    [n] -> case readMaybe n of
-                              Nothing ->
-                                M.continue (st & edit .~ editor
-                                               & userDialog .~ ("Hole must be a number!"))
-                              Just n  -> do
-                                let ii = InteractionId n
-                                if ii `elem` ips
-                                  then M.continue (st & focus .~ HoleLevel ii
-                                                      & edit .~ editor
-                                                      & userDialog .~ ("Successfully selected hole " ++ show ii))
-                                  else M.continue (st & edit .~ editor
-                                                      & userDialog .~ ("Hole does not exists!" ))
-                    _   -> M.continue newSt
-            _   -> M.continue newSt
-    TopLevel ->
-      case ev of
-        V.EvKey V.KEnter [] -> do
-          execTopCmd (D.dialogSelection (st^.topDialog)) st >>= M.continue
-        V.EvKey (V.KChar 'q') [] -> M.halt st
-        V.EvKey (V.KChar 'h') [] ->
-          execTopCmd (Just CmdTopHelp) st >>= M.continue
-        V.EvKey (V.KChar 's') [] ->
-          execTopCmd (Just CmdTopSelect) st >>= M.continue
-        V.EvKey (V.KChar 'u') [] ->
-          execTopCmd (Just CmdTopUndo) st >>= M.continue
-        V.EvKey (V.KChar 'o') [] ->
-          execTopCmd (Just CmdTopSolve) st >>= M.continue
-        _ -> do
-          newDialog <- D.handleDialogEvent ev (st^.topDialog)
-          M.continue (st & topDialog .~ newDialog)
+holeLevelEvent :: InteractionId -> Vty.Event -> MartinHandler (StateNext AppState)
+holeLevelEvent ii ev = do
+  bl <- appStateUI . uiHoleBtn <%= B.handleButtonListEvent ev
+  Continue <$ forM_ (B.activateButtons ev bl) (execHoleCmd ii)
 
-    HoleLevel ii ->
-      case ev of
-        V.EvKey V.KEnter [] -> do
-          execHoleCmd (D.dialogSelection (st^.holeDialog)) st >>= M.continue
-        V.EvKey (V.KChar 'h') [] ->
-          execHoleCmd (Just CmdHoleHelp) st >>= M.continue
-        V.EvKey (V.KChar 't') [] ->
-          execHoleCmd (Just CmdHoleType) st >>= M.continue
-        V.EvKey (V.KChar 'c') [] ->
-          execHoleCmd (Just CmdHoleContext) st >>= M.continue
-        V.EvKey (V.KChar 'r') [] ->
-          execHoleCmd (Just CmdRefine) st >>= M.continue
-        V.EvKey (V.KChar 's') [] ->
-          execHoleCmd (Just CmdSplit) st >>= M.continue
-        V.EvKey (V.KChar 'i') [] ->
-          execHoleCmd (Just CmdHoleHint) st >>= M.continue
-        V.EvKey V.KEsc [] -> M.continue (st & focus .~ TopLevel
-                                            & userDialog .~ "")
-        _ -> do
-          newDialog <- D.handleDialogEvent ev (st^.holeDialog)
-          M.continue (st & holeDialog .~ newDialog)
-    Done ->
-      case ev of
-        V.EvKey (V.KChar 'q') [] -> M.halt st
-        _ -> M.continue st
+doneEvent :: Vty.Event -> MartinHandler (StateNext AppState)
+doneEvent ev = case ev of
+  Vty.EvKey (Vty.KChar 'q') [] -> return Halt
+  _ -> return Continue
 
-execHoleCmd :: Maybe HoleCommand -> St -> T.EventM Name St
-execHoleCmd Nothing st = return st
-execHoleCmd (Just cmd) st = do
-  let HoleLevel ii = st^.focus
-  case cmd of
-    CmdRefine -> return (st & focus .~ UserInput (Refine ii)
-                            & userDialog .~ "Enter expression to refine")
-    CmdSplit  ->
-      return (st & focus .~ UserInput (Split ii)
-                 & userDialog .~ "Enter variable to split")
-    CmdHoleType   -> do
-      (type',newState) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
-                                 (MI.typeOfHole ii)
-      return (st & exState .~ newState
-                 & userDialog .~ type')
-    CmdHoleContext  -> do
-      (context,newState) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
-                                 (MI.contextOfHole ii)
-      return (st & exState .~ newState
-                 & userDialog .~ (unlines context))
-    CmdHoleHint  -> do
-      (hint,newState) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
-                          (use MI.exerciseHintLevel >>= MI.giveHint ii >>= \h -> MI.exerciseHintLevel += 1 >> return h)
-      return (st & exState .~ newState
-                 & userDialog .~ unlines hint)
-    CmdHoleHelp   ->
-      return $ st & userDialog .~ holeLevelhelp
+-- | Called when the user pressed enter in the mini buffer.
+miniBufferAction :: Action -> String -> MartinHandler ()
+miniBufferAction Select input = case readMaybe input of
+  Nothing -> appStateUI . uiInfoText .= "Hole must be a number!"
+  Just n -> do
+    let ii = InteractionId n
+    ips <- liftEx MI.currentInteractionPoints
+    if ii `elem` ips
+      then selectHole ii
+      else appStateUI . uiInfoText .= printf "Hole does not exist!"
+miniBufferAction (Refine ii) input = do
+  r <- liftExCatch $ do
+    MI.exerciseHintLevel .= 0
+    MI.refineUser ii input
+  case r of
+    Left e ->
+      appStateUI . uiInfoText .= MI.getPrettyTCErr e
+    Right feedback -> finishUserAction feedback
+miniBufferAction (Split ii) input = do
+  r <- liftExCatch $ do
+    MI.exerciseHintLevel .= 0
+    MI.splitUser ii input
+  case r of
+    Left e ->
+      appStateUI . uiInfoText .= MI.getPrettyTCErr e
+    Right feedback -> finishUserAction feedback
 
-execTopCmd :: Maybe TopCommand -> St -> T.EventM Name St
-execTopCmd Nothing st = return st
-execTopCmd (Just cmd) st =
-  case cmd of
-    CmdTopUndo -> do
-      (oldProg, oldState) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st)
-                                         (MI.undo >> (MI.exerciseHintLevel .= 0) >> MI.prettyProgram)
-      return (st & exState .~ oldState
-                 & exProg  .~ oldProg)
-    CmdTopSelect -> do
-      return (st & focus .~ UserInput Select
-                 & userDialog .~ "Enter a hole number")
-    CmdTopHelp   ->
-      return $ st & userDialog .~ topLevelhelp
-    CmdTopSolve -> do
-      ((feedback, newProg, ips), exSt) <- liftIO $ MI.runExerciseM (view exEnv st) (view exState st) $
-                                     (,,) <$> MI.solveExercise <*> MI.prettyProgram <*> MI.currentInteractionPoints
-      return $ st & focus .~ (if null ips then Done else TopLevel)
-                  & exState .~ exSt
-                  & exProg .~ newProg
-                  & userDialog .~ unlines feedback
+finishUserAction :: MI.Feedback -> MartinHandler ()
+finishUserAction feedback = do
+  ips <- liftEx MI.currentInteractionPoints
+  updateProgramText
+  case ips of
+    -- single hole left, directly select it
+    [ii] -> selectHole ii
+    _ -> zoom appStateUI $ do
+      uiMode .= (if null ips then Done else TopLevel)
+      uiInfoText .= unlines feedback
+      uiMiniBuffer .= miniBuffer
 
-editor = E.editor Edit (str . unlines) Nothing ""
+miniBufferChanged :: Action -> String -> MartinHandler ()
+miniBufferChanged Select input = do
+  ips <- liftEx MI.currentInteractionPoints
+  case filter (isPrefixOf input . show . interactionId) ips of
+    [ii] -> selectHole ii
+    _ -> return ()
+miniBufferChanged (Split ii) input = do
+  vars <- liftEx $ MI.localVariables ii
+  case filter (isPrefixOf input) vars of
+    [v] | v == input -> miniBufferAction (Split ii) v
+    _ -> return ()
+miniBufferChanged _ _ = return ()
 
-mkInitialState :: MI.ExerciseEnv -> MI.ExerciseState -> String -> St
-mkInitialState exEnv exState prog =
-    St editor
-       TopLevel
-       exState
-       exEnv
-       prog
-       ""
-       topLevelDialog
-       holeLevelDialog
+selectHole :: InteractionId -> MartinHandler ()
+selectHole ii = do
+  appStateUI . uiMode .= HoleLevel ii
+  appStateUI . uiInfoText .= printf "Selected hole %s!" (show ii)
+  appStateUI . uiMiniBuffer .= miniBuffer
 
+-- * Button commands
 
-theMap :: A.AttrMap
-theMap = A.attrMap V.defAttr
-    [ (D.dialogAttr, V.white `on` V.blue)
-    , (D.buttonAttr, V.black `on` V.white)
-    , (D.buttonSelectedAttr, bg V.yellow)
-    , (E.editAttr, V.black `on` V.white)
-    ]
+execTopCmd :: TopCommand -> MartinHandler (StateNext AppState)
+execTopCmd CmdTopUndo = do
+  success <- liftEx $ do
+    MI.exerciseHintLevel .= 0
+    MI.undo
+  updateProgramText
+  appStateUI . uiInfoText .= (if success then "Undone!" else "Nothing to undo!")
+  return Continue
+execTopCmd CmdTopSelect = do
+  zoom appStateUI $ do
+    uiMode .= UserInput Select
+    uiInfoText .=  "Enter a hole number"
+  return Continue
+execTopCmd CmdTopHelp = do
+  appStateUI . uiInfoText .= topLevelhelp
+  return Continue
+execTopCmd CmdTopSolve = do
+  feedback <- liftEx MI.solveExercise
+  appStateUI . uiInfoText .= unlines feedback
+  return Continue
+execTopCmd CmdTopQuit = return Halt
 
-appCursor :: St -> [T.CursorLocation Name] -> Maybe (T.CursorLocation Name)
+execHoleCmd :: InteractionId -> HoleCommand -> MartinHandler ()
+execHoleCmd ii CmdRefine =
+  zoom appStateUI $ do
+    uiMode .= UserInput (Refine ii)
+    uiInfoText .= "Enter expression to refine"
+execHoleCmd ii CmdSplit =
+  zoom appStateUI $ do
+    uiMode .= UserInput (Split ii)
+    uiInfoText .= "Enter variable to split"
+execHoleCmd ii CmdHoleType = do
+  ty <- liftEx $ MI.typeOfHole ii
+  appStateUI . uiInfoText .= printf "Goal type: %s" ty
+execHoleCmd ii CmdHoleContext = do
+  context <- liftEx $ MI.contextOfHole ii
+  appStateUI . uiInfoText .= printf "Context of hole:\n%s" (unlines context)
+execHoleCmd ii CmdHoleHint = do
+  hint <- liftEx $ do
+    lvl <- MI.exerciseHintLevel <<+= 1
+    MI.giveHint ii lvl
+  appStateUI . uiInfoText .= unlines hint
+execHoleCmd _ CmdHoleHelp =
+  appStateUI . uiInfoText .= holeLevelhelp
+execHoleCmd _ CmdHoleLeave = zoom appStateUI $ do
+  uiMode .= TopLevel
+  uiInfoText .= ""
+
+-- * UI Update Functions
+
+liftEx :: (MonadState AppState m, MonadIO m) => ReaderT MI.ExerciseEnv (StateT MI.ExerciseState IO) a -> m a
+liftEx ex = do
+  e <- use $ appStateEx . exEnv
+  s <- use $ appStateEx . exState
+  (a, s') <- liftIO $ MI.runExerciseM e s ex
+  appStateEx . exState .= s'
+  return a
+
+liftExCatch :: (MonadState AppState m, MonadIO m) => ReaderT MI.ExerciseEnv (StateT MI.ExerciseState IO) a -> m (Either MI.PrettyTCErr a)
+liftExCatch ex = do
+  e <- use $ appStateEx . exEnv
+  s <- use $ appStateEx . exState
+  ret <- liftIO $ E.try $ MI.runExerciseM e s ex
+  case ret of
+    Left err -> return $ Left err
+    Right (a, s') -> do
+      appStateEx . exState .= s'
+      return $ Right a
+
+updateProgramText :: (MonadIO m) => StateT AppState m ()
+updateProgramText = liftEx MI.prettyProgram >>= assign (appStateUI . uiProgramText)
+
+-- * UI Component Definitions
+
+miniBuffer :: Brick.Editor String UIName
+miniBuffer = Brick.editor MiniBuffer (Brick.str . unlines) (Just 1) ""
+
+holeLevelButtons :: B.ButtonList HoleCommand
+holeLevelButtons = B.buttonList 0
+  [B.button "[H]elp" CmdHoleHelp  (Just 'h')
+  ,B.button "[T]ype" CmdHoleType  (Just 't')
+  ,B.button "[C]ontext" CmdHoleContext (Just 'c')
+  ,B.button "[R]efine" CmdRefine (Just 'r')
+  ,B.button "[S]plit" CmdSplit (Just 's')
+  ,B.button "H[i]nt" CmdHoleHint (Just 'i')
+  ,B.button "[L]eave" CmdHoleLeave (Just 'l')
+  ]
+
+topLevelButtons :: B.ButtonList TopCommand
+topLevelButtons = B.buttonList 0
+  [B.button "[H]elp" CmdTopHelp (Just 'h')
+  ,B.button "[S]elect hole" CmdTopSelect (Just 's')
+  ,B.button "[U]ndo" CmdTopUndo (Just 'u')
+  ,B.button "S[o]lution" CmdTopSolve (Just 'o')
+  ,B.button "[Q]uit" CmdTopQuit (Just 'q')
+  ]
+
+topLevelhelp :: String
+topLevelhelp = unlines
+  [ "Welcome to martin, the interactive Agda tutor."
+  , " "
+  , "  We are now in the top level."
+  , " "
+  , "  You can either select a hole to work on or undo your last step."
+  , "  If the program text doesn't fit your screen, you can use the up and down arrow keys to scroll."
+  , " "
+  ]
+
+holeLevelhelp :: String
+holeLevelhelp = unlines
+  [ "Now that you select a hole you can:"
+  , " "
+  , "  Ask for the type of the hole."
+  , "  Ask for items in the context of the hole."
+  , "  Fill the hole with an expression."
+  , "  Case split on a variable."
+  , " "
+  , "  If you are really stuck, you can ask me for a hint!"
+  , "  (disclaimer: use this power wisely)"
+  , " "
+  ]
+
+mkInitialState :: MI.ExerciseEnv -> MI.ExerciseState -> AppState
+mkInitialState exEnv exState = AppState
+  { _appStateUI = UIState
+    { _uiMiniBuffer = miniBuffer
+    , _uiMode        = TopLevel
+    , _uiProgramText = ""
+    , _uiInfoText    = ""
+    , _uiTopLevelBtn = topLevelButtons
+    , _uiHoleBtn     = holeLevelButtons
+    }
+  , _appStateEx = ExState exState exEnv
+  }
+
+attributes :: Brick.AttrMap
+attributes = Brick.attrMap Vty.defAttr
+  [ (B.buttonAttr, Vty.black `Brick.on` Vty.white)
+  , (B.buttonSelectedAttr, Brick.bg Vty.yellow)
+  , (Brick.editAttr, Vty.black `Brick.on` Vty.white)
+  ]
+
+appCursor :: s -> [Brick.CursorLocation n] -> Maybe (Brick.CursorLocation n)
 appCursor _ _ = Nothing
 
-theApp :: M.App St V.Event Name
-theApp =
-  M.App { M.appDraw          = drawUI
-        , M.appChooseCursor  = appCursor
-        , M.appHandleEvent   = appEvent
-        , M.appStartEvent    = return
-        , M.appAttrMap       = const theMap
-        , M.appLiftVtyEvent  = id
-        }
+-- * App Entry Point
+
+theApp :: Brick.App AppState Vty.Event UIName
+theApp = Brick.App
+  { Brick.appDraw          = appStateUI `views` drawUI
+  , Brick.appChooseCursor  = appCursor
+  , Brick.appHandleEvent   = appEvent
+  , Brick.appStartEvent    = return
+  , Brick.appAttrMap       = const attributes
+  , Brick.appLiftVtyEvent  = id
+  }
 
 runApp :: AU.AgdaOptions -> FilePath -> IO ()
 runApp agdaOpts agdaFile = do
@@ -362,31 +401,10 @@ runApp agdaOpts agdaFile = do
   case i of
     Left err -> putStrLn err
     Right (exEnv,exState) -> do
-      prog <- fst <$> MI.runExerciseM exEnv exState MI.prettyProgram
-      _ <- M.defaultMain theApp  (mkInitialState exEnv exState prog)
+      _ <- execStateT updateProgramText (mkInitialState exEnv exState) >>= Brick.defaultMain theApp
       return ()
 
-topLevelhelp :: String
-topLevelhelp = unlines
-          [ "Welcome to martin, the interactive Agda tutor."
-          , " "
-          , "  We are now in the top level."
-          , " "
-          , "  You can either selected a hole to work on"
-          , "  or undo your last step."
-          , " "
-          ]
+-- * Helper functions
 
-holeLevelhelp :: String
-holeLevelhelp = unlines
-          [ "Now that you select a hole you can:"
-          , " "
-          , "  Ask for the type of the hole."
-          , "  Ask for items in the context of the hole."
-          , "  Fill the hole with an expression."
-          , "  Case split on a variable."
-          , " "
-          , "  If you are really stuck, you can ask me for a hint!"
-          , "  (disclaimer: use this power wisely)"
-          , " "
-          ]
+modifyM :: MonadState s m => (s -> m s) -> m ()
+modifyM f = get >>= f >>= put

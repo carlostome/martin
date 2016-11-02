@@ -109,6 +109,12 @@ giveHint ii hintLevel = do
             ++ List.intercalate ", " vars ++ "."
       | otherwise ->  return $ "Split variable '" ++ var ++ "'."
 
+-- | Returns the local variables that are in scope at the given hole.
+localVariables :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
+               => InteractionId -> m [String]
+localVariables ii = do
+  tcs <- use $ exerciseProgram . S.programTCState
+  fst <$> runTCMEx tcs (map show <$> AU.varsInScope ii)
 
 -- | Retrieves the strategy for the given hole from the state.
 getStrategyFor :: (MonadState ExerciseState m)
