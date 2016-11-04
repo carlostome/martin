@@ -27,4 +27,4 @@ git clone https://github.com/carlostome/martin.git
 
 ## Usage
 
-Run the program with `stack exec martin-exeA` and have fun!
+Run the program with `stack exec martin-exe` and have fun!
