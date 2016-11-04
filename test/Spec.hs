@@ -57,6 +57,7 @@ testCases =
   [ ("map : (A -> B) -> Vec A n -> Vec B n", "test-files/VecMap.agda")
   , ("replicate : (n : Nat) -> A -> Vec A n", "test-files/VecReplicate.agda")
   , ("append : Vec A m -> Vec A n -> Vec A (add m n)", "test-files/VecAppend.agda")
+  , ("member? : ((x y : A) -> Dec (x == y)) -> (v : A) -> (vs : List A) -> Dec (Member v vs)", "test-files/ListMember.agda")
   ]
 
 main :: IO ()
