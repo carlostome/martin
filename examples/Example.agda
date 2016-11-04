@@ -86,18 +86,3 @@ data _⊆_ {A : Set} : {m n : Nat} → Vec A m → Vec A n → Set where
   sub-same  : ∀{m n} {xs : Vec A m} {ys : Vec A n} {x : A} → xs ⊆ ys → x ∷ xs ⊆ x ∷ ys
   sub-cons  : ∀{m n} {xs : Vec A m} {ys : Vec A n} {y : A} → xs ⊆ ys → xs ⊆ y ∷ ys
 
-
-data Foo : Nat → Set where
-  Bar : Foo 0
-  Baz : ∀{n} → Foo (succ n)
-
-data Test : Nat → Set where
-  test : (n : Nat) → Test n
-
-foo : (n : Nat) → Foo n → Test n
-foo .0 Bar = test zero
-foo _ Baz = test (succ _)
-
-fooadd : Nat → Nat → Nat
-fooadd x zero = x
-fooadd x (succ y) = succ {!!}
