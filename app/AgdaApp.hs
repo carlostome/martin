@@ -271,8 +271,11 @@ execTopCmd CmdTopHelp = do
   appStateUI . uiInfoText .= topLevelhelp
   return Continue
 execTopCmd CmdTopSolve = do
-  feedback <- liftEx MI.solveExercise
-  appStateUI . uiInfoText .= unlines feedback
+  liftExCatch MI.solveExercise >>= \case
+    Left err -> appStateUI . uiInfoText .= printf "Failed to solve exercise:\n%s" (MI.getPrettyTCErr err)
+    Right feedback -> do
+      appStateUI . uiInfoText .= unlines feedback
+      updateProgramText
   return Continue
 execTopCmd CmdTopQuit = return Halt
 
