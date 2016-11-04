@@ -25,7 +25,7 @@
   \and Renate Eilers
   \and  \small{Department of Information and Computing Sciences, Utrecht University}
   }
-\title{Stepwise construction of simple Agda programs}
+\title{Stepwise Construction of Simple Agda Programs}
 \subtitle{Research Report}
 \date{\today}
 
@@ -37,271 +37,63 @@
 
 \tableofcontents
 
-\section{Program Construction}
+\section{Introduction}
 
-\subsection{Assumptions and Restrictions}
+Over the past decades, \emph{intelligent tutoring systems} (ITSs) have proven themselves beneficial to the acquisition of procedural skills such as algebraic equation solving or programming language proficiency\cite{Anderson1995}. ITSs, like for instance Ask-Elle\cite{Gerdes2012} for the Haskell programming language, allow users to request real-time feedback on their progress, and query the system for hints on how to continue. Observed successes of ITSs in learning programming languages\cite{Anderson1989},\cite{corbett1988problem} inspired the idea to create such a system for the dependently typed programming language and theorem prover Agda.
 
-\begin{itemize}
-\item fully saturated functions (i.e.\ all parameters are occurring on the left
-  hand side of the definition)
-\item all types are in \texttt{Set}, the lowest level of the universe hierarchy
-\item data constructors don't have function arguments
-\end{itemize}
+The aim of this research is to lay the building blocks for creating this system. Rather than relying on teachers to supply solutions to exercises, it would be more convenient for the tutor to be capable of calculating solutions for a given specification independently. This alludes to the following research question: \emph{What (sub-)class of semi-decidable programs (or, equivalently, proofs) can be automatically constructed in the programming language Agda through a series of mechanical steps that would normally be performed by a user writing a program, and how can we automatically extract these steps for programs within these classes?} 
 
-\subsection{Rules of Construction}
+The steps towards answering this question can be found in recent literature on automatic program synthesis and proof search. The work presented in this report reaches a solution in the form of a prototypical implementation of an intelligent tutoring system. This prototype is capable of generating model solutions for a given function specification (if any exist), and subsequently guiding a user to a solution in a stepwise manner. 
 
-\paragraph{Case splitting}
+In the following we will discuss current research in the area of automatic program construction, and explain how these works relate to finding an answer the question posed earlier. We show how an existing algorithm for proof search can be used and extended to implement an interactive programming tutor, and shed a light on the capabilities and limitations of this implementation. We assess its results and discuss future work.
 
-\begin{itemize}
-\item given a $n$-ary function $f : (x_1 : T_1) \rightarrow (x_2 : T_2\ x_1)
-  \rightarrow \cdots \rightarrow T_{n+1}\ x_1\ \ldots\ x_n $ where the argument
-  types can depend on the values of the arguments to their left, where
-  $T_i\ x_1\ \ldots\ x_{i-1}$ can be a function type, a data type or
-  \texttt{Set}. In the latter case, the arguments passed to $T_i$ do not
-  actually matter
-\item note that it is only possible to match on data types
-\item case splits are only allowed in definition clauses of the following form
-  \begin{equation}
-    \label{eq:f_def}
-    f\ p_1\ \ldots\ p_n = \mathbf{hole}
-  \end{equation}
-  where $p_1, \ldots, p_n$ denote the argument patterns and \textbf{hole} is a
-  metavariable. This means that we can only case split, if the whole right hand
-  side consists of a single hole.
-\item abstract syntax of patterns
-  \begin{equation}
-    \begin{array}{rcl}
-      x & \in & \mathbf{Var} \\
-      p & ::= & x \mid \mathbf{Constr}\ p_1\ \ldots\ p_n
-    \end{array}
-  \end{equation}
-\item a case split can only be applied to (possibly nested) variables in one of
-  the patterns, if the type of that variable is a data type (i.e.\ it has been
-  introduced by a \texttt{data} declaration)
-\item a successful case split on a variable $x$ replaces the current clause with
-  one new clause for every data constructor corresponding to the type of $x$,
-  replacing the occurrence of $x$ with a new pattern and fresh variables for
-  each constructor argument.
-  Only constructors whose type can be unified with the type of $x$ are
-  considered.
-  This is demonstrated in the example below.
-  \begin{lstlisting}[mathescape, gobble=4, language = agda]
-    data Foo : Nat -> Set where
-      Bar : Foo 0
-      Baz : forall {n} -> Foo (succ n)
+\section{Method}
 
-    foo : (n : Nat) -> Foo n -> Nat
-    foo zero Bar = {!!}
-    foo (succ n) Baz = {!!}
-  \end{lstlisting}
-  Case splitting on the second argument (after the first argument) in the first clause only introduced the
-  \texttt{Bar} constructor, as the type of the \texttt{Baz} constructor does not
-  unify with \texttt{Foo 0}.
-\item splitting variables can affect other patterns, e.g. by introducing dot
-  patterns\footnote{\url{http://agda.readthedocs.io/en/latest/language/function-definitions.html\#dot-patterns}}.
-  In the example above, this can be witnessed by first splitting on the second
-  argument, resulting in
+Given a function specification, generating an Agda program is primarily a process of pattern matching on the right variables and supplying the correct refinements for holes that are left open. At any point, the type of a hole is determined. This makes proof search, or program construction per the Curry-Howard correspondence, a type-driven activity. A survey of the literature(\cite{Foster2011},\cite{Lindblad2006},\cite{Kokke2015}) shows that the subject of automatic, type-driven proof search is well-explored. A promising starting point for the specific purpose of this research was found in \cite{Kokke2015}, which demonstrates a type-driven proof search algorithm based on first-order unification for automatically filling holes using a set of definitions provided as hints. The algorithm permits users to bound search depth so as to allow searching for possibly semi-decidable programs whilst still ensuring termination. It should be noted that in the current version, finding solutions for goals involving function types is not possible. Additionally, it does not involve case splitting in its proof search. 
 
-  \begin{lstlisting}[mathescape, gobble=4, language = agda]
-    foo : (n : Nat) -> Foo n -> Nat
-    foo .0 Bar = {!!}
-    foo _ Baz = {!!}
-  \end{lstlisting}
+As pattern matching tends to take up an important part of program construction by human users, it is essential that the programming tutor incorporates this tactic. The system presented here uses the proof search algorithm mentioned above as a subroutine for hole refinement. If no such refinement can be found, it picks a variable to split on and subsequently searches for a way to refine the holes in the clauses that resulted from the case split. We shall now proceed to formalise these steps. Doing so requires the introduction of some definitions:
 
-\end{itemize}
+\subsection{Programs}
 
-some heuristics to guide case splitting
-\begin{itemize}
-\item perform case splits in a breadth-first manner, i.e.\ first try split all
-  variables on the current level before trying to perform case splitting on the
-  variables nested inside constructor patterns.
-\item if all $n$ arguments are independent and every data type consists of at
-  most $m$ constructors, case splitting all variables on the top-most level
-  results in at most $m^n$ clauses.
-  In realistic examples making use of Agda's support for dependent types, we
-  expect this number to be a lot smaller.
-\item sometimes, it might only be possible to split a variable after first
-  having split some other arguments before it. An (admittedly rather contrived)
-  example for this behaviour is shown below:
+We define program to be of a set of functions, where functions consist of a type declaration and a set of clauses. The programming tutor expects a set of necessary auxiliary functions to be fully defined. All function types must be specified. This includes the function for which a strategy is to be generated.
 
-  \begin{lstlisting}[mathescape, gobble=4, language = agda]
-    contrived : (m n : Nat) -> n + m == m + n -> m + n == n + m
-    contrived m n p = ?
-  \end{lstlisting}
+\subsection{Clauses}
 
-  Although trivially solvable using a more general definition of symmetry, in this
-  specific instance Agda is unable to pattern match on \texttt{p} because it
-  cannot normalise the expressions in the $\equiv$-expressions.
-\item a good guess for the order in which to perform case splitting might be the
-  topological sorted dependency graph of the argument types, starting with the
-  arguments on which no further arguments depend.
-  In the type signature
+A clause relates a set of patterns on the left hand side with an expression on the right hand side. To facilitate formalization, every pattern and expression will be explicitly typed. Possible dependencies on types given other patterns are omitted. They will be made explicit again when the step relation is defined. It should be noted that all types are assumed to be in \texttt{Set}, the lowest level of the universe hierarchy.
 
-  \begin{lstlisting}[mathescape, gobble=4, language = agda]
-    (m n : Nat) -> (p : m == n) -> n == m
-  \end{lstlisting}
-  a valid topologically sorted sequence would be $m, n, p$, hence we would split
-  first on $p$.
-  The disadvantage of this approach is that it introduces dot patterns in the
-  preceding arguments, where we do not know how to handle them appropriately
-\end{itemize}
+\begin{equation}
+  \begin{array}{rcl}
+    c & ::= & (p_1\ :\ T_1)\ (p_2\ :\ T_2)\ \dots\ (p_n\ :\ T_n)=\ (e : T_{n+1})\ \mid\
+    \bigwedge_{i=1}^{n} c_i
+  \end{array}
+\end{equation}
 
-\paragraph{Refinement}
+If any of the patterns on the left hand side are a type constructor, then there should be a function clause for every other possible (well typed) constructor of that type as well to make sure all cases are covered by the clauses. We will suppose from now on that this is the case.
 
-\begin{itemize}
-\item A refinement is the introduction of a (possibly) incomplete term of the
-  right type in a hole
-\item case splitting is not possible after starting to refine the right hand
-  side of a clause. If no solution can be found, backtracking is needed.
-\item if a hole requires a function, we can only fill it with a definition in
-  scope that has a matching type. For now, we do not support the introduction of
-  lambda expressions.
-\item a hole that requires a data type can be either refined with a data
-  constructor, a variable of the right type, or with function returning a value
-  of the required type.
-  For constructors and functions, new holes are introduced for every argument.
-  If the function is a recursive call, then at least one of the arguments must
-  be structurally smaller.
-\item search depth must be limited to prevent the search from generating
-  infinitely nested data constructors.
-\end{itemize}
+For program construction it is import to know whether a complete definition is reached. A clause is \textit{complete} if its right hand side expression is \textit{complete}:
 
-some heuristics for refinement
-
-\begin{itemize}
-\item a variable of a correct type should always be preferred over introducing
-  data constructors or function calls, because it clearly leads to the simplest
-  solutions
-\end{itemize}
-
-\subsection{Combining case split and refinement}
-
-\begin{itemize}
-\item every clause of the definition is independent from all others
-\item the basic algorithm should always first try to find a solution for the
-  right hand side of a clause, and only if that fails, perform another case
-  split.
-\item we should investigate whether it is possible to retain partial solutions
-  between to attempts of solving the same goal, that only differ in some
-  additional case splits.
-\end{itemize}
-
-\subsection{Introducing Properties}
-
-\begin{itemize}
-\item basic properties on some function $f$ should be of the following shape
-  \begin{equation}
-    \label{eq:prop}
-    \forall \vec{x}. f\ t_1\ \ldots\ t_n \equiv t_{n+1}
-  \end{equation}
-  where $t_1, \ldots, t_{n+1}$ are terms possibly involving some of the
-  universally quantified variables.
-  This provides simple means for stating relations between the inputs and result
-  of a function.
-\item investigate whether we can handle universal quantification in properties
-\item Before starting the refinement phase, we can check which properties apply
-  to the current clause. Then we can use Agda to (partially) normalize the
-  property expression, resulting in an expression, that might contain additional
-  metavariables. But even these partial results can be used to restrict the set
-  of possible solutions to a hole, if the metavariables only occur inside some
-  constructors.
-\item investigate whether properties can be used for guiding case splits. for
-  example, if we consider the property $\forall x. x + 0 \equiv x$, then it
-  might be sensible to assume that splitting on the second argument is
-  preferred.
-\item it seems that universally quantified properties are only helpful during
-  the search phase, if the universally quantified arguments are exactly those,
-  that are not case-split during the search
-\end{itemize}
-
-\subsection{The Strategy}
-
-For a given type signature we use Agda's expressive type system to generate a
-model solution. Here, we need to take into account the current partial solution
-created by the student, because they might have chosen a different path leading
-to the same (or different but also valid) solution.
-
-If no solution can be found starting at the students current partial solution,
-then either the path chosen by the student will indeed not lead to a successful
-completion of the problem, or it will, but the algorithm is just not able to
-find it.
-
-When we have found a model solution, we track back the steps taken by the search
-algorithm to provide a strategy that can be used to give hints to the student.
-Ideally, if the type signature is strong enough, there is only one valid
-solution to an Agda program.
-
-\begin{itemize}
-\item on the top level of the strategy, we can interleave the sub-strategies for
-  solving individual clauses of a function definition. (they are independent of
-  each other)
-\item trying to solve a certain clause can produce more clauses when case splits
-  are performed
-\item when solving a clause, case splits must always be performed before
-  refinements
-\item the order of refining holes in the current clause generally does not
-  matter (i.e.\ it could be interleaved), but in certain cases Agda will only
-  accept a refinement for a function argument if another argument is refined
-  before
-\item the case split strategy is constructed from a valid order of splits that
-  lead to a successful completion of the right hand side
-\item the refinement strategy is guided by the steps taken by the proof search
-\end{itemize}
-
-\subsection{Examples}
-
-\todo[inline]{elaborate on some examples by showing the search for a solution in
-detail (i.e.\ including the unifications necessary)}
-
-\paragraph{map function} A stepwise construction of a map function on vectors,
-including the intermediate goal types.
-\begin{enumerate}
-\item The initial program
-\begin{lstlisting}[mathescape, language = agda]
-data Nat : Set where
-  zero : Nat
-  succ : Nat -> Nat
-
-data Vec (a : Set) : Nat -> Set where
-  Nil  : Vec a zero
-  Cons : forall {n} -> a -> Vec a n -> Vec a (succ n)
-
-map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
-map f xs = {!!}
-\end{lstlisting}
-The type of the hole is \lstinline[language=agda]|Vec B n| where A, B and n are
-implicit. The argument types are \lstinline[language=agda]|f : A -> B| and
-\lstinline[language=agda]|xs : Vec A n|. Searching for refinements using only
-definitions in scope would lead to the tautological definition
-\lstinline[language=agda]|map f xs|, which will be rejected because the
-arguments are not structurally smaller.
-
-\item The only parameter that can be split is \texttt{xs}
-
-\end{enumerate}
-
-\section{Formalization}
-
-In this section, we formalize the subset of Agda we are interested in for
-deriving automatically a program that satisfices some type.
+\begin{equation}
+  \begin{array}{rcl}
+    complete?((p_1 : T_1)\ (p_2 : T_2) \dots (p_n : T_n)=\ (e :
+    T_{n+1})) & = & complete?(e)\\
+    complete?(\bigwedge_{i=1}^{n} c_i) & = & \bigwedge_{i=1}^{n} complete?(c_i)
+  \end{array}
+\end{equation}
 
 \subsection{Patterns}
 
-A pattern is a tree like structure that may be either a variable or a type
-constructor applied to other patterns. When case splitting we should be able to
-do so either in a top level variable or a possibly nested variable inside the
-pattern. As an invariant we know that the variables appearing all along the
-patterns are unique.
+A pattern is a tree-like structure that can be a variable, a type-constructor applied to other patterns, or an inaccessible pattern (also known as a \emph{dotted pattern}, as it is denoted by a pattern prefixed with `.'):
 
 \begin{equation}
   \begin{array}{rcl}
     x & \in & \mathbf{Var} \\
-    p & ::= & x \mid \mathbf{Constr}\ p_1\ \ldots\ p_n
+    p & ::= & x \mid \mathbf{Constr}\ p_1\ \ldots\ p_n \mid .p
   \end{array}
 \end{equation}
 
-We define the following function that given a pattern it returns the set of
-variables that it contains.
+Case splitting can be performed on both top level variables and variables nested inside an accessible pattern. As an invariant, variables appearing along accessible patterns are unique. Inaccessible patterns may only reference variables bound in accessible patterns\cite{norell:thesis}.
+
+The following function returns the set of variables that a given pattern contains:
 
 \begin{equation}
   \begin{array}{rcl}
@@ -310,36 +102,9 @@ variables that it contains.
   \end{array}
 \end{equation}
 
-Another important consideration is that we need a function that allows us to
-replace a pattern variable by a new pattern in case we are case splitting in
-such variable. Of course it is not straightforward as variables in patterns
-might be nested withing type constructors.
+\subsection{Expressions}
 
-\begin{equation}
-  \begin{array}{rcl}
-    replace(x,p,y) & = & y\\
-    replace(x,p,x) & = & p\\
-    replace(x,p,\mathbf{Constr}\ p_1\ \ldots\ p_n) & = & \mathbf{Constr}\
-    replace(x,p,p_1) \ldots replace(x,p,p_n)
-  \end{array}
-\end{equation}
-
-\subsection{Type}
-
-% The types we consider are either $Set$, D_i
-
-\subsection{Expression}
-
-An expression is part of the right hand side of a function clause. We consider
-as expressions either a variable possibly applied to a number of other
-expressions, or a type constructor applied to a list of expressions or a hole
-that we denote with \textbf{?}.
-
-It is important to note that unlike raw Agda, we do not consider the posibility
-that expressions may be themselves lambda abstractions which would lead us to
-higher order unification during proof search which is known to be undecidable.
-In the case an auxiliary function is needed it must be already avaliable from
-another top level binding.
+Expressions can be either a variable, possibly applied to a number of other expressions, a type constructor applied to a list of expressions, or a hole, denoted by `\textbf{?}':
 
 \begin{equation}
   \begin{array}{rcl}
@@ -348,9 +113,9 @@ another top level binding.
   \end{array}
 \end{equation}
 
-We call an expression \textit{complete} if it does not have any hole \textbf{?}
-remaining either in the top level or in any of its subexpressions. We can define
-a function that computes this.
+It is important to note that unlike raw Agda, we do not consider the option that expressions may be lambda abstractions, as this would require higher order unification during proof search, which is known to be undecidable. If an auxiliary function is used in an expression, it must have been declared in a top-level binding beforehand.
+
+An expression is considered \textit{complete} if no holes remain in either the top level or in any of its sub-expressions. The following function computes this:
 
 \begin{equation}
   \begin{array}{rcl}
@@ -362,61 +127,18 @@ a function that computes this.
   \end{array}
 \end{equation}
 
-\subsection{Clause}
+\subsection{The Step-Relation} 
 
-A function definition is just a set of clauses that relate a set of patterns
-with an expression.
+Now that all necessary definitions have been made, it is time to formalise precisely what a \emph{step} is. A step is characterised as a relation on clauses. Additionally, this relation involves a signature $\Sigma$ that contains relevant type declarations, and a context $\Gamma$ containing any other relevant functions that have been priorly declared.
 
-If any of the patterns in the left hand side is a type constructor, then there
-should be a function clause for every other possible (well typed) constructor of
-the type so the full type is covered by the clauses. We will suppose from now on
-that this is the case.
+The step relation is not deterministic. At each step we can choose to try the proof search algorithm on the hole in the right hand side, or perform a case split on some variable in the left hand side of the clause. It should be noted that a case split can only be performed on clauses where the right hand side is a hole.
 
-In order to facilitate the formalization, we are going to explicitly type every
-pattern and the resulting expression. Note that in this case we omit possible
-dependencies on the types given other patterns. This will be made again explicit
-when we define the step relation.
+The first rule for relating two clauses describes the case where a hole has been successfully refined by an expression found by the proof search algorithm:
 
-\begin{equation}
-  \begin{array}{rcl}
-    c & ::= & (p_1\ :\ T_1)\ (p_2\ :\ T_2)\ \dots\ (p_n\ :\ T_n)=\ (e : T_{n+1})\ \mid\
-    \bigwedge_{i=1}^{n} c_i
-  \end{array}
-\end{equation}
-
-We also define a function that can inspect a clause and decide whether or not we
-have reached a complete definition. We call a clause \textit{complete} when the right
-hand side expression is \textit{complete}.
-
-\begin{equation}
-  \begin{array}{rcl}
-    complete?((p_1 : T_1)\ (p_2 : T_2) \dots (p_n : T_n)=\ (e :
-    T_{n+1})) & = & complete?(e)\\
-    complete?(\bigwedge_{i=1}^{n} c_i) & = & \bigwedge_{i=1}^{n} complete?(c_i)
-  \end{array}
-\end{equation}
-
-\subsection{Step relation $\leadsto$}
-
-We can now give the full definition of what a step means. We are going to
-characterize a step as a relation on \textbf{Clause}. We have to include in this
-relation a signature $\Sigma$ that contains the relevant information for types
-and a context $\Gamma$ of any other relevant functions that may be avaliable.
-
-This relation is not deterministic. At each step we can choose to try the proof
-search algorithm on the hole in the right hand side, or perform a case split on
-some variable in the left hand side of the clause. We restric as Agda the case
-split only to the case where the full expression in the right hand side is still
-a hole and has not been partially fullfiled.
-
-Now we can give the first rule that relates two clauses where in the second one
-the hole has been succesfully filled by an expression found by the proof search
-algorithm.
-
-\begin{figure}[h]
+\begin{figure}[h] 
   \centering
   \footnotesize
-  \AxiomC{\textit{proof search}$(\Sigma, extend(\Gamma,p) , T_{n+1}\ p_1\dots p_n) = e$}
+  \AxiomC{\textit{proof search}$(\Sigma, (p_1:\dots(p_n:\Gamma)\dots) , T_{n+1}\ p_1\dots p_n) = e$}
   \AxiomC{$complete?(e)$}
   \RightLabel{Step\_Proof\_Search}
   \BinaryInfC{$\Sigma ; \Gamma \vdash (p_1:T_1) \dots (p_n : T_n\ p_1 \dots p_{n-1})\
@@ -430,57 +152,272 @@ algorithm.
   \DisplayProof
 \end{figure}
 
-The second rule that we need to define is the one that relates two clauses when
-the actual case split is performed. In this case is not just a rule, but a rule
-schema that can be instatiated for every possible variable on where we can
-perform the splitting. This is denoted as a subscribe in $\leadsto_{k:x}$.
+The second rule describes the case split step. Intuitively, pattern matching on a variable results in a compound clause consisting of as many conjuncts as there are constructors for the type of the variable under consideration. Every conjunct is identical to the original, with the exception of the variable that is being split on: this has been replaced by each of the constructors of the variable's type. 
 
-\begin{figure}[h]
+However, the actual step for case splits is a bit more involved because we have to take into account that Agda allows users to define inductive type families. Pattern matching on a variable might influence both other patterns whose type depends on this variable as an index, or types that are indices to such variable. When we match on a pattern of the inductive type family $\texttt{T i}_\texttt{1} \ldots \texttt{i}_\texttt{n} $ with a constructor of the type $\texttt{C : (x}_\texttt{1}\texttt{ : A}_\texttt{1}\texttt{)} \rightarrow \ldots \rightarrow \texttt{(x}_\texttt{m}\texttt{ : A}_\texttt{m}\texttt{)} \rightarrow \texttt{T j}_\texttt{1} \ldots \texttt{j}_\texttt{n}$ Agda will try to unify every $\texttt{i}_\texttt{i}$ with  $\texttt{j}_\texttt{i}$. If the resulting unification causes some left hand side variable \texttt{x} to be instantiated with a value \texttt{v}, then \texttt{x} will be replaced by \texttt{.v} in the left hand side of the resulting clause. 
+
+The case split rule is not just a rule, but a rule schema that can be instantiated for every variable on which a split can be performed. The selected variable is denoted by \textit{x} in $\leadsto_{x}$. Note that in the rule below, $LHS$  is an abbreviation for $(p_1:T_1) \dots (p_n : T_n\ p_1 \dots p_{n-1})$.
+
+\begin{prooftree}
+  \def\defaultHypSeparation{\hskip.05in}
   \centering
   \footnotesize
-  \AxiomC{\textit{constructors}$(\Sigma, T_k\ p_1 \dots p_{k-1}) = \mathbf{Constr}_1 \dots \mathbf{Constr}_m$}
-  \AxiomC{$x \in vars(p_k)$}
-  \AxiomC{$x_1 \dots x_j \in \textbf{fresh}$}
+  \AxiomC{$x \in vars(LHS)$}
+  \AxiomC{$\Sigma \vdash x : T_x$}
+  \AxiomC{\textit{constructors}$(T_x) = \mathbf{C}_1 : T_{C1}, \dots, \mathbf{C}_m : T_{Cm}$}
+  \AxiomC{$unify(\Sigma,\Gamma,T_{Ci},T_x) = \sigma_i$}
   \RightLabel{Step\_Case\_Split}
-  \TrinaryInfC{$\Sigma ; \Gamma \vdash
-    (p_1:T_1) \dots (p_k : T_k\ p_1 \dots p_{k-1}) \dots (p_n : T_n\ p_1 \dots
-    p_{n-1})\ =\ (\textbf{?}:T_{n+1}\ p_1\dots p_n)$}
+  \QuaternaryInfC{$\Sigma ; \Gamma \vdash 
+    LHS =\ (\textbf{?}:T_{n+1}\ p_1\dots p_n)$}
   \noLine
-  \UnaryInfC{$\leadsto_{k:x}$}
+  \UnaryInfC{$\leadsto_{x}$}
   \noLine
-  \UnaryInfC{$\Sigma ; \Gamma \vdash \bigwedge_{i=1}^{m} (\dot{p_1} : T_1) \dots
-  (replace(p_k, x, \mathbf{Constr}_i\ x_1 \dots x_j) : T_i\ {p_1} \dots {p_{i-1}})
-    \dots (\dot{p_n} : T_n\ \dot{p_1} \dots
-    \dot{p_{n-1}})\ =\ (\textbf{?}:T_{n+1}\ \dot{p_1}\dots \dot{p_n})$}
-  \DisplayProof
-\end{figure}
+  \UnaryInfC{$\Sigma ; \Gamma \vdash \bigwedge_{i=1}^{m} LHS\{ \sigma_i \circ [x \mapsto C_i] \} \ =\ (\textbf{?}:T_{n+1}\ \dot{p_1}\dots \dot{p_n})$}
+\end{prooftree}
 
-In this rule, when we try to pattern match on a variable,. The resulting clause
-is a compound of the original clause where the variable under consideration has
-been replaced by each one of the constructors of the type. Moreover, because we
-are dealing with dependent types it is important to note that pattern matching
-on a variable of a specific type might influence as well other variables in
-other patterns. We denote this by putting a dot over the patterns in the outcome
-clause.
-
-For the sake of completeness we also allow a step to take place in any of the
-single clauses that may appear within a compound clause.
+For completeness, we also include a rule that allows a step to take place in any of the single clauses that may appear within a compound clause.
 
 \begin{figure}[h]
   \centering
   \footnotesize
-  \AxiomC{$c_i \leadsto c'_i$}
-  \UnaryInfC{$\bigwedge c_1 \dots c_i \dots c_n \leadsto \bigwedge c_1 \dots c'_i \dots c_n $}
+  \AxiomC{$\Sigma ; \Gamma \vdash c_i \leadsto c'_i$}
+  \UnaryInfC{$\Sigma ; \Gamma \vdash \bigwedge c_1 \dots c_i \dots c_n \leadsto \bigwedge c_1 \dots c'_i \dots c_n $}
   \DisplayProof
 \end{figure}
-
-Now we are able to say that a stepwise construction of a program is the 
 
 \section{Implementation}
 
-\begin{itemize}
-\end{itemize}
+In order to answer the research question, we have developed a prototype implementation\footnote{The code can be found in \url{https://github.com/carlostome/martin}.} that we named Martin.\footnote{After the Swedish logician and philosopher Per Martin-Löf who developed the theory underlying Agda.} We have implemented Martin using the programming language Haskell. Since Agda is also implemented in Haskell, we can seamlessly interface with it.
+
+The main component of Martin, is a library that provides the required functionality to automatically generate step wise strategies for completing Agda programs. Moreover, the library also provides an API to develop intelligent tutor systems for Agda. In order to demonstrate how easily the Martin library can be used for building applications we include a graphical application withing the package.
+
+In this section, we briefly give an overview of the actual implementation of the library. 
+
+\subsection{Strategy}
+
+In the previous section, we formalized what a step should consist of when generating a strategy for an Agda program. A strategy for an exercise consists of one \texttt{ClauseStrategy} (as shown below) for every hole  in the exercise module.
+
+\begin{lstlisting}[mathescape, language = haskell]
+data ClauseStrategy
+  = SplitStrategy String [ClauseStrategy]
+  | RefineStrategy Proof
+\end{lstlisting}
+
+A clause can by solved by refinement (\texttt{RefineStrategy}) if we have a proof generated by the proof search. Alternatively, we can split on a variable (\texttt{SplitStrategy}) and apply a strategy to each of the resulting clauses.
+
+The core of our strategy construction is implemented in the \texttt{Martin.Strategy} module by the two functions.
+\begin{lstlisting}[mathescape, language = haskell]
+proofSearchStrategy :: StatefulProgram 
+                     -> InteractionId -> Search ClauseStrategy
+splitStrategy :: StatefulProgram 
+               -> InteractionId -> Search ClauseStrategy
+\end{lstlisting}
+A \texttt{StatefulProgram} consists of the AST of an Agda program coupled with the state of the type checker after successfully checking it. We need to store snapshots of Agda's state because almost every operation in the Agda monad is inherently stateful and we often need to revert that state to known checkpoints.
+
+The \texttt{proofSearchStrategy} tries to find a refinement using the proof search algorithm. If that fails while still being in a top-level hole, it invokes the \texttt{splitStrategy} instead.
+Our \texttt{Search} monad provides the exploration of multiple alternatives by means of the \texttt{MaybeT} transformer.
+
+\subsection{User Interface}
+
+We also implemented a rudimentary terminal user interface using the \texttt{brick-0.11}\footnote{It is available on Hackage under \url{https://hackage.haskell.org/package/brick-0.11}.} library. It presents the source code and provides means for a student to interact with holes.
+
+On the one hand, this involves requesting contextual information, such as the type of the goal or the definitions in context as well as getting more specific hints based on the computed strategy.
+Our hints are partitioned in levels revealing more and more details if the student repeatedly asks.
+
+On the other hand, a student can perform a refinement or a case-split in a hole. The action is then compared to the strategy and the user is notified if his action diverges from the strategy, and if so, in what regard.
+Additionally, a new strategy is computed based on the new state of the program. The user is notified if the tutor was unable to generate a strategy from their actions.
+
+\section{Results}
+Having implemented the intelligent programming tutor Martin, we can now focus on determining the different classes of programs that can be automatically constructed. We will do this by showing how Martin can derive solutions for Agda programs that differ in how dependent types are used and in how many example properties the program requires. Furthermore, we will also discuss what classes of programs cannot be automatically constructed by Martin.
+\begin{lstlisting}[mathescape, language = agda]
+map : forall {A B n} -> (A -> B) -> Vec A n -> Vec B n
+map f vnil = vnil
+map f (vcons x xs) = vcons (f x) (map f xs)
+\end{lstlisting}
+Martin was able to completely derive the solution to the function map that maps a function over a vector whose length is encoded in the \texttt{Vec} data type. If the Vector is empty, then the type signature restricts the result to be an empty Vector as well. Martin's proof search then unifies the goal, the empty vector type, to the \texttt{vnil} rule and therefore refines the hole with \texttt{vnil}. Likewise for a non-empty vector, it will derive a refinement with \texttt{vcons}, since the resulting vector must also be non-empty. The remaining two holes must be an element of type \texttt{B} and a vector containing elements of type B of length one less than the argument vector. Also for the element type, Martin's proof search was able to find correct refinements. Even though this is a very simple program, Martin was able to derive a correct solution using only the type of the elements in the vector and the length of the vector.
+
+\begin{lstlisting}[mathescape, language = agda]
+append : forall {a b n} -> Vec A m -> Vec A n -> Vec A (add m n)
+append vnil ys = ys
+append (vcons x xs) ys = vcons x (append xs ys)
+\end{lstlisting}
+Another example where Martin is able to derive a solution using dependent types is the append function. We apply add to the given vector lengths and state that the resulting vector must have that size. The only way for Martin to construct a program that satisfies the result type, given the local variables and defined functions, is to actually append the first vector to the second vector. Whilst this is mostly a feature of dependent types, we will see later that Martin can't derive all dependently typed programs. 
  
+\begin{lstlisting}[mathescape, language = agda]
+append : forall {A} -> List A -> List A -> List A
+append nil ys = ys
+append (cons x xs) ys = cons x (append xs ys)
+
+appendP1 : forall {x l l'} -> append (cons x l) l' == cons x (append l l')
+appendP1 = refl
+
+appendP2 : forall {l} -> append nil l == l
+appendP2 = refl
+\end{lstlisting}
+We will look at the append function once more, but this time we have replaced the vector data type by the list data type.
+Since no length information is given, Martin does not have enough information to derive a program that is correct w.r.t.\ both types and semantics.
+The simplest solution of the correct type is to always return the empty list.
+To solve this problem, we can add example properties.
+The types of these properties guide Martin to determine what correct and incorrect derivations are by influencing which solution candidates found by the proof search actually type-check.
+For example, if we have case-split on the first list, then according to the type of append, nil would have been a valid result. However, the proposition \texttt{appendP2} states that if the first list is empty, then the result should be equal to the second list. Martin is now guided to the correct solution for this hole, which is \texttt{ys}.
+However, the use of such equality based properties is rather limited. They just correspond to the two function clauses of the correct solution, and hence it is even more work to specify such properties than to just specify a model solution.
+
+% Fabian: changed the following part; you don't need with for that.
+% given a function 'or : Bool -> Bool -> Bool' and a function 'eq : Nat -> Nat -> Bool', you can define
+% isMember x nil = false
+% isMember x (cons y ys) = or (eq x y) (isMember x ys)
+%
+% Still, the type of isMember itself is just to weak, that's why I added the example below:
+
+Nonetheless, instead of specifying external properties it is often possible to encode them directly in the type of the function being implemented.
+The following code snippet shows a type signature of a function to check whether a particular element is part of a list.
+\begin{lstlisting}[mathescape, language = agda]
+isMember : Nat -> List Nat -> Bool
+isMember x xs = ?
+\end{lstlisting}
+While such a function would certainly return a boolean value in conventional programming languages, we can (and have to) do better in Agda. This type signature does not give any guarantees about whether the element is indeed part of the list.
+Furthermore, it does not provide useful information to the proof search algorithm, as any boolean value would fulfill the requirements.
+
+A function that can actually be usefully applied in proofs would itself need to return a proof whether an element is part of a list or not. That is what \emph{decidable equality}, encoded in the \texttt{Dec A} type, is about. It can either be a proof \texttt{A}, or a proof that, given \texttt{A}, we can generate an inhabitant of the empty type. That ultimately means that the proof \texttt{A} could not have existed in the first place.
+
+\begin{lstlisting}[mathescape, language = agda]
+data Empty : Set where
+
+data Not (A : Set) : Set where
+  is-absurd : (A -> Empty) -> Not A
+
+data Dec (A : Set) : Set where
+  yes : A -> Dec A
+  no : Not A -> Dec A
+\end{lstlisting}
+
+As Martin is not able to synthesize lambda abstractions, we wrap the negation of a proof in a data type, to hide it from the proof search algorithm. A proof that an element is part of a list now simply consists of a path through the cons constructors, encoded by the \texttt{Member} data type.
+Since an implementation of \texttt{member} requires with-clauses which cannot (yet) be introduced by Martin, a skeleton of the function body containing all the required with-clauses has to be given.
+
+\begin{lstlisting}[mathescape, language = agda]
+data Member {A : Set} (x : A) : List A -> Set where
+  here : {xs : List A} -> Member x (cons x xs)
+  there : forall {y} -> {xs : List A} -> Member x xs -> Member x (cons y xs)
+
+empty-no-member : forall {A} -> {x : A} -> Not (Member x nil)
+
+neither-here-nor-there : forall {A} -> {x y : A} {ys : List A} -> Not (x == y) 
+  -> Not (Member x ys) -> Not (Member x (cons y ys))
+
+member : forall {A} -> ((x y : A) -> Dec (x == y)) -> (v : A) -> (vs : List A) -> Dec (Member v vs)
+member eq? x nil = no empty-no-member
+member eq? x (cons y ys) with eq? x y
+member eq? x (cons y ys) | yes p = {!!}
+member eq? x (cons y ys) | no pf with member eq? x ys
+member eq? x (cons y ys) | no pf | member = {!!}
+\end{lstlisting}
+The remaining holes can now be solved automatically. This shows, that a stronger type usually also gives more useful results. However, the lemmas \texttt{empty-no-member} and \texttt{neither-here-nor-there} need to be supplied by the teacher.
+
+% Fabian: I don't get the purpose of the following example. What difference does it make whether one uses
+% a vector or a list to find whether an element is part of it?
+% Edit: (Commented out that part, since we are already at the page limit}
+
+%\begin{lstlisting}[mathescape, language = agda]
+%isMemberV : forall {n} -> (x : Nat ) -> Vec Nat n -> Bool
+%listToVec : (l : List Nat) -> Vec Nat (length l)
+%\end{lstlisting}
+%One way to get around this limitation, but only for specific programs, is to introduce a conversion from one data type to another data type. There should also exist a function isMember that works for the other data type. For this example, we have provided two auxillary functions. One for converting a list to a vector and another that implements isMember for vectors. 
+%\begin{lstlisting}[mathescape, language = agda]
+%isMember : Nat -> List Nat -> Bool
+%isMember x xs = isMemberV x (listToVec xs)
+
+%isMemberP1 : forall {n l} -> isMember n l == isMemberV n (listToVec l)
+%\end{lstlisting}
+%Then using a property we can guide Martin to convert the list to a vector and then apply isMemberV to this vector. Similar to append for lists, writing the property is as much work as defining the solution by hand. We also had to come up with two auxiliary functions, although the conversion function could be automatically derived.
+
+The last limitation we will discuss is the restriction to first order unification.
+Syntactically this means that variables cannot have arguments in proof search terms.
+A common case where such a situation arises is the \emph{congruence} rule for equality,
+typed in Agda as follows.
+\begin{lstlisting}[mathescape, language = agda]
+cong : forall {A B} -> (f : A -> B) -> {x y : A} -> x == y -> f x == f y
+\end{lstlisting}
+Being restricted to first-order unification, Martin is unable to generate a proof search rule for this function,
+because the variable \texttt{f} is applied to an argument in the return value.
+Nevertheless, it is able to find an implementation to the \texttt{cong} itself, because in the function body
+all variables have been instantiated with constants. Pattern matching on the proof argument unifies \texttt{x ~ y}
+and therefore reduces the goal type to \texttt{f x == f x}, which in turn can be unified with the type of \texttt{refl},
+since \texttt{f} and \texttt{x} are constants in this scope.
+
+Another limitation of our work is that is not possible to effectively generate strategies in the presence of input/output properties. An input/ouput property defines the relation between the input of a function and the output it $\beta$-reduces to. For example we could have the following i/o property,
+
+\begin{lstlisting}[mathescape, language = agda]
+prop1 : map id (cons zero nil) == cons zero nil
+prop1 = refl
+\end{lstlisting}
+
+We might expect that given several input/output properties would at least serve to derive a strategy that satisfies those properties. However, our approach to case splitting assumes that every hole in a program is independent of each other and therefore a strategy for filling a hole can be also generated independently of other holes. When a hole is refined, it is type checked against the program with the other remaining holes, and in this way we are delaying the satisfiability of the properties to those other holes, leading to an incorrect strategy.
+
+\section{Conclusion and Future Work} % saving space by heaving one headline less
+
+This project has shown how we can leverage Agda's type system to automatically generate model solutions for programming exercises.
+Furthermore, it is possible to extract a strategy that is used to give hints and feedback to students.
+Compared to programming tutors like Ask-Elle for Haskell, where a teacher has to specify multiple model solutions, automatically generating these is an obvious advantage.
+Moreover, if a student deviates from the initial strategy, our system can simply search for a new strategy starting at the students partial implementation.
+In Ask-Elle, students leaving the path laid out by the model solution are on their own and no longer receive hints or feedback.
+We have also improved over the version of automatic program construction presented in the paper Auto In Agda by being able to perform case splitting when the search procedure cannot find a suitable answer.
+
+A significant part of our work was trying to understand the internal mechanics of the Agda compiler to be able to attach our system on top of it. 
+
+Currently, our system faces several limitations. The most notable is the restriction to first-order unification during proof search and not being able to synthesize lambda terms. This can partly be mitigated by hiding the additional type complexity behind simpler data types.
+While these auxiliary definitions cannot be proven themselves using our system, they can then at least be used in other proofs.
+Additionally, some programs require matching on the results of (recursive) function calls. In Agda, this can be done using the \texttt{with} notation.
+While our system is able to work with such clauses that are already present, it is, at the current state, unable to introduce such pattern matching itself.
+
+Lastly, neither does it not support external properties (i.e.\ those that are not encoded in the relevant types) nor input/output examples.
+
+% Extend with properties to prune search tree
+% Heuristics for variable selection (for instance by expanding the variable with the biggest impact)
+The work just presented here is basic and it leaves a lot of room for improvement. We, now, enumerate and briefly discuss what we think it can be interesting lines of work.
+\begin{itemize}
+\item Integration of Martin within the Ideas\cite{Heeren2010} framework.
+
+It should be feasible to integrate our work with the Ideas framework, such that we regard an Agda program as the domain in hand, and any well-type preserving transformation as a step. As for any other domain, case splitting and refining will be regarded as the expert defined rules.
+
+\item Support other dependently typed programming languages.
+
+The work developed here is not exclusive of Agda but can be generalized until some extent to other dependently typed programming languages such as Idris\cite{brady2013idris}. Even in a near future, when Dependent Haskell\cite{DepHaskell} is fully developed, we might be able to apply there the same ideas.
+
+\item Improve proof search to handle a restricted version of higher-order unification.
+
+The proof search algorithm now only handles first order unification as higher order unification in general is not decidable. However, there has been some work on the area that restricting the kind of higher order components (functions mainly) that you can encode makes unification decidable. For more on this, please refer to the work of Miller\cite{Miller91alogic}.
+
+\item Improve heuristics for case splitting
+
+Correctly selecting a variable for case splitting is crucial to control the size of the search space when generating a strategy. In the dependently typed setting, several variables on the left hand side of a function clause can be related through the type they stand for. Case splitting on one of them allows us to gain more information about the others, and in many cases reduce the number of clauses needed to fully define a function. Variable dependencies within patterns induce a DAG where the dependency is encoded as an arc in the graph. 
+A thorough analysis of the DAG should be able to determine the variable with the highest impact on other variables when case splitting.
+However, it is not clear whether such variable has to appear as a leaf node or in some inner node.
+
+\item Use properties within the proof search algorithm to prune the search space.
+
+Currently the proof search algorithm has no context sensitive information that helps prune the search space when refining a hole. It would be interesting to see if somehow we can encode some kind of property and effectively use it.
+
+% \item Study how to integrate input/output properties so the strategy generation is sound.
+
+% In our approach we considered that the process of generating a strategy for filling more than one hole is to be taking as independently generating a strategy for each of the holes. However, if we want to use Agda type system to encode input/output relations involving the function(s) we are interested in, might lead to inconsistent results as the strategy generated for one hole might independently typecheck 
+
+\end{itemize}
+
+
+% Fabian: Do we really need an appendix?
+% Carlos: No
+% \section*{Appendix}
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Old stuff
+% (To be worked in later)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%1
+
+% Now we are able to say that a stepwise construction of a program is the 
 
 % \begin{figure}
 %   \AxiomC{\textit{constructors}$(\Sigma, T_i\ p_1 \dots p_{i-1}) = C_1 \dots C_m$}
