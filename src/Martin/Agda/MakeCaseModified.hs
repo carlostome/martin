@@ -1,9 +1,12 @@
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE TupleSections   #-}
-{-| This module is a copy of the Agda module "Agda.Interaction.MakeCase" with one small change.
--   Instead of calling 'getImportedSignature' when searching a Clause, it calls 'getSignature'.
+{-| This module is a copy of the Agda module "Agda.Interaction.MakeCase" with two small changes.
+-   Firstly, instead of calling 'getImportedSignature' when searching a Clause, it calls 'getSignature'.
 -   This is because at the point where we need this functionality, we have never actually finished
 -   the type checking in a way that our definitions would be part of the imported signature.
+-
+-   Secondly, it replaces variables called "()" by absurd patterns, because for some reason, Agda's
+-   case split code returns these as variables and not as the patterns they actually are.
 -}
 module Martin.Agda.MakeCaseModified where
 
@@ -47,6 +50,9 @@ import qualified Agda.Utils.Pretty as P
 import Agda.Utils.Singleton
 import Agda.Utils.Size
 import qualified Agda.Utils.HashMap as HMap
+
+import qualified Control.Lens as Lens
+import qualified Martin.Agda.Lens as ML
 
 type CaseContext = Maybe ExtLamInfo
 
@@ -190,7 +196,9 @@ makeCase hole rng s = withInteractionId hole $ do
         Nothing  -> typeError $ GenericError $ "Cannot split on result here"
         Just cov -> ifNotM (optCopatterns <$> pragmaOptions) failNoCop $ {-else-} do
           mapM (snd <.> fixTarget) $ splitClauses cov
-    (casectxt,) <$> mapM (makeAbstractClause f) scs
+    cs <- mapM (makeAbstractClause f) scs
+    let cs' = Lens.over (traverse . ML.clausePatterns . ML.patternLeaves) fixAbsurdlyBrokenAbsurdPatterns cs
+    return (casectxt, cs')
   else do
     -- split on variables
     vars <- parseVariables hole rng vars
@@ -199,7 +207,9 @@ makeCase hole rng s = withInteractionId hole $ do
       [ text "split result:"
       , nest 2 $ vcat $ map (text . show) cs
       ]
-    return (casectxt,cs)
+    -- REMARK: added this to fix broken patterns:
+    let cs' = Lens.over (traverse . ML.clausePatterns . ML.patternLeaves) fixAbsurdlyBrokenAbsurdPatterns cs
+    return (casectxt,cs')
   where
 
   failNoCop = typeError $ GenericError $
@@ -265,3 +275,8 @@ deBruijnIndex e = do
     _       -> typeError . GenericError . show =<< (fsep $
                 pwords "The scrutinee of a case distinction must be a variable,"
                 ++ [ prettyTCM v ] ++ pwords "isn't.")
+
+
+fixAbsurdlyBrokenAbsurdPatterns :: A.Pattern' e -> A.Pattern' e
+fixAbsurdlyBrokenAbsurdPatterns (A.VarP v) | P.prettyShow v == "()" = A.AbsurdP (A.PatRange $ nameBindingSite v)
+fixAbsurdlyBrokenAbsurdPatterns other = other

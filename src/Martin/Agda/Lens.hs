@@ -86,6 +86,20 @@ patternVars f = go where
   go (A.DefP info name a) = A.DefP info name <$> traverseOf (traversed . _unArg . _namedThing) go a
   go other = pure other
 
+patternLeaves :: Traversal' (A.Pattern' e) (A.Pattern' e)
+patternLeaves f = go where
+  go v@(A.VarP _) = f v
+  go c@(A.ConP _ _ []) = f c
+  go (A.ConP info name a) = A.ConP info name <$> traverseOf (traversed . _unArg . _namedThing) go a
+  go d@(A.DefP _ _ []) = f d
+  go (A.DefP info name a) = A.DefP info name <$> traverseOf (traversed . _unArg . _namedThing) go a
+  go w@(A.WildP _) = f w
+  go (A.AsP i n pat) = A.AsP i n <$> go pat
+  go a@(A.AbsurdP _) = f a
+  go l@(A.LitP _) = f l
+  -- TODO: unsupported records and PatternSyn (?)
+  go other = pure other
+
 -- | A lens that skips top-level scoped expressions.
 skipScoped :: Lens' A.Expr A.Expr
 skipScoped f = go where
