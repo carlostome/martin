@@ -147,6 +147,9 @@ splitUser ii var = do
       "I cannot guarantee you can solve the exercise that way, though it might still be possible."
 
 -- | Executes a refinement action.
+-- Refining a hole in the presence of other types that need to beta reduce
+-- with a diverging program makes the program loop.
+-- This has been reported to the Agda repository as issue #2286.
 refineUser :: (MonadState ExerciseState m, MonadReader ExerciseEnv m, MonadIO m)
            => InteractionId -> String -> m Feedback
 refineUser ii def = do
