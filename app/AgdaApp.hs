@@ -263,19 +263,23 @@ execTopCmd CmdTopUndo = do
   appStateUI . uiInfoText .= (if success then "Undone!" else "Nothing to undo!")
   return Continue
 execTopCmd CmdTopSelect = do
-  zoom appStateUI $ do
-    uiMode .= UserInput Select
-    uiInfoText .=  "Enter a hole number"
+  liftEx MI.currentInteractionPoints >>= \case
+    [] -> appStateUI . uiInfoText .= "No holes left!"
+    _ -> zoom appStateUI $ do
+      uiMode .= UserInput Select
+      uiInfoText .=  "Enter a hole number"
   return Continue
 execTopCmd CmdTopHelp = do
   appStateUI . uiInfoText .= topLevelhelp
   return Continue
 execTopCmd CmdTopSolve = do
-  liftExCatch MI.solveExercise >>= \case
-    Left err -> appStateUI . uiInfoText .= printf "Failed to solve exercise:\n%s" (MI.getPrettyTCErr err)
-    Right feedback -> do
-      appStateUI . uiInfoText .= unlines feedback
-      updateProgramText
+  liftEx MI.currentInteractionPoints >>= \case
+    [] -> appStateUI . uiInfoText .= "No holes left!"
+    _ -> liftExCatch MI.solveExercise >>= \case
+      Left err -> appStateUI . uiInfoText .= printf "Failed to solve exercise:\n%s" (MI.getPrettyTCErr err)
+      Right feedback -> do
+        appStateUI . uiInfoText .= unlines feedback
+        updateProgramText
   return Continue
 execTopCmd CmdTopQuit = return Halt
 
