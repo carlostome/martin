@@ -35,7 +35,7 @@ To start the interactive terminal application, run it with the `-a` option, pass
 The command for starting the tutor from the project root directory with the vector example is
 
 ```bash
-stack exec martin-exe -- -a examples/Vec.agda
+stack exec martin-exe -- -a data/test-files/ListAppend.agda
 ```
 
 Alternatively, it is also possible to just generate and print a strategy by passing `-p` instead of `-a`.
