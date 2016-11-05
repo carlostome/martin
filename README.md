@@ -34,8 +34,17 @@ Run the program with `stack exec martin-exe` and have fun!
 To start the interactive terminal application, run it with the `-a` option, passing the file as the last argument.
 The command for starting the tutor from the project root directory with the vector example is
 
+**NOTE**: In order to use it with the provided test files (data/test-files), the program
+has to be run inside that directory.
+
 ```bash
+<<<<<<< HEAD
 stack exec martin-exe -- -a data/test-files/ListAppend.agda
+||||||| parent of 8f6c356... Update readme
+stack exec martin-exe -- -a examples/Vec.agda
+=======
+stack exec martin-exe -- -a Vec.agda
+>>>>>>> 8f6c356... Update readme
 ```
 
 Alternatively, it is also possible to just generate and print a strategy by passing `-p` instead of `-a`.
