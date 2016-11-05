@@ -38,13 +38,7 @@ The command for starting the tutor from the project root directory with the vect
 has to be run inside that directory.
 
 ```bash
-<<<<<<< HEAD
-stack exec martin-exe -- -a data/test-files/ListAppend.agda
-||||||| parent of 8f6c356... Update readme
-stack exec martin-exe -- -a examples/Vec.agda
-=======
 stack exec martin-exe -- -a Vec.agda
->>>>>>> 8f6c356... Update readme
 ```
 
 Alternatively, it is also possible to just generate and print a strategy by passing `-p` instead of `-a`.
