@@ -33,7 +33,7 @@ before_install:
 
 install:
 # Build dependencies customized with 100 minutes due to Agda dependency
-- travis_wait 180 stack --no-terminal --install-ghc test --only-dependencies
+- stack -v --no-terminal --install-ghc test --only-dependencies
 
 script:
 # Build the package, its tests, and its docs and run the tests
