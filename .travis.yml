@@ -32,8 +32,8 @@ before_install:
 - travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
 
 install:
-# Build dependencies
-- travis_wait 60 stack --no-terminal --install-ghc test --only-dependencies
+# Build dependencies customized with 100 minutes due to Agda dependency
+- travis_wait 100 stack --no-terminal --install-ghc test --only-dependencies
 
 script:
 # Build the package, its tests, and its docs and run the tests
