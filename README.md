@@ -1,5 +1,7 @@
 # Martin
 
+[![Build Status](https://travis-ci.org/carlostome/martin.svg?branch=master)](https://travis-ci.org/carlostome/martin)
+
 The interactive Agda tutor system
 
 ## Prerequisites
